@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class ConfigService {
@@ -58,8 +60,45 @@ export class ConfigService {
     });
 
     return {
-      message: 'Public schedule configuration updated successfully.',
+      message: 'Configuration updated successfully.',
       settings: updated,
+    };
+  }
+
+  async uploadLogo(tenantSlug: string, imageBase64: string) {
+    const cleanSlug = tenantSlug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    const uploadsDir = process.env.UPLOADS_DIR || '/var/www/acionar-v3/uploads';
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    const matches = imageBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    let buffer: Buffer;
+    let ext = 'png';
+
+    if (matches && matches.length === 3) {
+      ext = matches[1].split('/')[1] || 'png';
+      buffer = Buffer.from(matches[2], 'base64');
+    } else {
+      buffer = Buffer.from(imageBase64, 'base64');
+    }
+
+    const fileKey = `logo_${cleanSlug}_${Date.now()}.${ext}`;
+    const filePath = path.join(uploadsDir, fileKey);
+    fs.writeFileSync(filePath, buffer);
+
+    const publicHost = process.env.PUBLIC_HOST || 'https://76.13.230.110.nip.io';
+    const fotoUrl = `${publicHost}/uploads/${fileKey}`;
+
+    const tenant = await this.prisma.tenant.update({
+      where: { slug: cleanSlug },
+      data: { foto_url: fotoUrl },
+    });
+
+    return {
+      message: 'Logo enviado com sucesso.',
+      foto_url: fotoUrl,
+      tenant,
     };
   }
 }
