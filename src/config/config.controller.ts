@@ -12,6 +12,16 @@ export class ConfigController {
     return this.configService.getPublicScheduleConfig(req.user.tenant_slug);
   }
 
+  @Get('payments')
+  async getPaymentConfig(@Req() req: any) {
+    return this.configService.getPaymentConfig(req.user.tenant_slug);
+  }
+
+  @Put('payments')
+  async updatePaymentConfig(@Req() req: any, @Body() body: any) {
+    return this.configService.updatePaymentConfig(req.user.tenant_slug, body);
+  }
+
   @Put('public-schedule')
   async updatePublicScheduleConfig(@Req() req: any, @Body() body: any) {
     return this.configService.updatePublicScheduleConfig(req.user.tenant_slug, body);

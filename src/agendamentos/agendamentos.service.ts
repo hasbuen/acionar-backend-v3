@@ -79,15 +79,16 @@ export class AgendamentosService {
   async update(tenantSlug: string, id: number, dto: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const { status, data_hora, valor_total, observacao } = dto;
+      const { status, data_hora, valor_total, observacao, profissional_id } = dto;
       const res: any = await this.prisma.$queryRawUnsafe(
         `UPDATE agendamentos
          SET status = COALESCE($1, status),
              data_hora = CASE WHEN $2::text IS NOT NULL THEN $2::timestamptz ELSE data_hora END,
              valor_total = COALESCE($3, valor_total),
-             observacao = COALESCE($4, observacao)
-         WHERE id = $5 RETURNING *`,
-        status, data_hora || null, valor_total, observacao, id
+             observacao = COALESCE($4, observacao),
+             profissional_id = COALESCE($5, profissional_id)
+         WHERE id = $6 RETURNING *`,
+        status, data_hora || null, valor_total, observacao, profissional_id, id
       );
 
       if (!res || res.length === 0) throw new NotFoundException('Appointment not found.');

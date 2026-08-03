@@ -9,6 +9,7 @@ import { ServicosModule } from './servicos/servicos.module';
 import { ClientesModule } from './clientes/clientes.module';
 import { CaixaModule } from './caixa/caixa.module';
 import { EstoqueModule } from './estoque/estoque.module';
+import { ProfissionaisModule } from './profissionais/profissionais.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -23,6 +24,7 @@ import { AppController } from './app.controller';
     ClientesModule,
     CaixaModule,
     EstoqueModule,
+    ProfissionaisModule,
   ],
   controllers: [AppController],
 })
