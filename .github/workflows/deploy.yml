@@ -1,0 +1,45 @@
+name: Deploy Acionar Backend v3 to VPS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install & Test Code
+        run: |
+          npm ci || npm install
+          node --check src/server.mjs
+
+      - name: Deploy to VPS via SSH
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_IP || '76.13.230.110' }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "."
+          target: "/var/www/acionar-v3/backend"
+          strip_components: 0
+
+      - name: Restart Application via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_IP || '76.13.230.110' }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /var/www/acionar-v3/backend
+            npm install --production
+            pm2 describe acionar-backend-v3 > /dev/null 2>&1 && pm2 reload acionar-backend-v3 || pm2 start src/server.mjs --name acionar-backend-v3
+            pm2 save
