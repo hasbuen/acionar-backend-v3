@@ -21,4 +21,9 @@ export class EstoqueController {
   async createMovimentacao(@Req() req: any, @Body() body: any) {
     return this.estoqueService.createMovimentacao(req.user.tenant_slug, req.user, body);
   }
+
+  @Post('transferencias')
+  async transferProduto(@Req() req: any, @Body() body: any) {
+    return this.estoqueService.transferProduto(req.user.tenant_slug, req.user, body);
+  }
 }
