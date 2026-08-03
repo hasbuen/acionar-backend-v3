@@ -12,6 +12,7 @@ import servicosRoutes from './routes/servicos.mjs';
 import clientesRoutes from './routes/clientes.mjs';
 import caixaRoutes from './routes/caixa.mjs';
 import estoqueRoutes from './routes/estoque.mjs';
+import profissionaisRoutes from './routes/profissionais.mjs';
 
 dotenv.config();
 
@@ -41,6 +42,7 @@ app.use('/api/servicos', servicosRoutes);
 app.use('/api/clientes', clientesRoutes);
 app.use('/api/caixa', caixaRoutes);
 app.use('/api/estoque', estoqueRoutes);
+app.use('/api/profissionais', profissionaisRoutes);
 
 // Global 404 handler
 app.use((req, res) => {

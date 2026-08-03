@@ -1,9 +1,43 @@
 import express from 'express';
-import { queryPublic } from '../db/postgres.mjs';
+import { queryPublic, queryTenant } from '../db/postgres.mjs';
 import { authMiddleware } from '../middleware/auth.mjs';
 import { clearTenantCache } from '../middleware/tenant.mjs';
 
 const router = express.Router();
+
+async function readPaymentSettings(tenantSlug) {
+  const result = await queryTenant(tenantSlug, 'SELECT valor FROM configuracoes WHERE chave = $1', ['pagamentos']);
+  return result.rows[0]?.valor || { asaas_enabled: false, asaas_environment: 'sandbox', pix_key: '', pix_key_type: 'aleatoria', asaas_api_key_configured: false };
+}
+
+router.get('/payments', authMiddleware, async (req, res) => {
+  try {
+    const settings = await readPaymentSettings(req.user.tenant_slug);
+    res.json({ settings: { ...settings, asaas_api_key: undefined, asaas_api_key_configured: Boolean(settings.asaas_api_key) } });
+  } catch (err) {
+    console.error('[GET PAYMENT CONFIG ERROR]', err);
+    res.status(500).json({ error: 'Failed to fetch payment configuration.' });
+  }
+});
+
+router.put('/payments', authMiddleware, async (req, res) => {
+  try {
+    const { tenant_slug } = req.user;
+    const current = await readPaymentSettings(tenant_slug);
+    const next = {
+      asaas_enabled: Boolean(req.body.asaas_enabled),
+      asaas_environment: req.body.asaas_environment === 'production' ? 'production' : 'sandbox',
+      pix_key: String(req.body.pix_key || '').trim(),
+      pix_key_type: String(req.body.pix_key_type || 'aleatoria'),
+      asaas_api_key: req.body.asaas_api_key ? String(req.body.asaas_api_key).trim() : current.asaas_api_key || ''
+    };
+    await queryTenant(tenant_slug, `INSERT INTO configuracoes (chave, valor, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()`, ['pagamentos', JSON.stringify(next)]);
+    res.json({ message: 'Payment configuration saved.', settings: { ...next, asaas_api_key: undefined, asaas_api_key_configured: Boolean(next.asaas_api_key) } });
+  } catch (err) {
+    console.error('[UPDATE PAYMENT CONFIG ERROR]', err);
+    res.status(500).json({ error: 'Failed to save payment configuration.' });
+  }
+});
 
 /**
  * GET /api/config/public-schedule

@@ -103,7 +103,7 @@ router.put('/:id', async (req, res) => {
   try {
     const { tenant_slug } = req.user;
     const { id } = req.params;
-    const { status, data_hora, valor_total, observacao } = req.body;
+    const { status, data_hora, valor_total, observacao, profissional_id } = req.body;
 
     const result = await queryTenant(
       tenant_slug,
@@ -111,9 +111,10 @@ router.put('/:id', async (req, res) => {
        SET status = COALESCE($1, status),
            data_hora = COALESCE($2, data_hora),
            valor_total = COALESCE($3, valor_total),
-           observacao = COALESCE($4, observacao)
-       WHERE id = $5 RETURNING *`,
-      [status, data_hora, valor_total, observacao, id]
+           observacao = COALESCE($4, observacao),
+           profissional_id = COALESCE($5, profissional_id)
+       WHERE id = $6 RETURNING *`,
+      [status, data_hora, valor_total, observacao, profissional_id, id]
     );
 
     if (result.rows.length === 0) {
