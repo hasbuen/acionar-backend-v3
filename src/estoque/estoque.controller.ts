@@ -1,0 +1,24 @@
+import { Controller, Get, Post, Body, Req, UseGuards } from '@nestjs/common';
+import { EstoqueService } from './estoque.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+
+@Controller('api/estoque')
+@UseGuards(JwtAuthGuard)
+export class EstoqueController {
+  constructor(private readonly estoqueService: EstoqueService) {}
+
+  @Get('produtos')
+  async findProdutos(@Req() req: any) {
+    return this.estoqueService.findProdutos(req.user.tenant_slug);
+  }
+
+  @Post('produtos')
+  async createProduto(@Req() req: any, @Body() body: any) {
+    return this.estoqueService.createProduto(req.user.tenant_slug, req.user, body);
+  }
+
+  @Post('movimentacoes')
+  async createMovimentacao(@Req() req: any, @Body() body: any) {
+    return this.estoqueService.createMovimentacao(req.user.tenant_slug, req.user, body);
+  }
+}

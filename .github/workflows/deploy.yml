@@ -1,4 +1,4 @@
-name: Deploy Acionar Backend v3 to VPS
+name: Deploy Acionar Backend v3 (NestJS + Prisma) to VPS
 
 on:
   push:
@@ -17,10 +17,11 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install & Test Code
+      - name: Install & Build Code
         run: |
           npm ci || npm install
-          node --check src/server.mjs
+          npx prisma generate
+          npm run build
 
       - name: Deploy to VPS via SSH
         uses: appleboy/scp-action@v0.1.7
@@ -41,5 +42,7 @@ jobs:
           script: |
             cd /var/www/acionar-v3/backend
             npm install --production
-            pm2 describe acionar-backend-v3 > /dev/null 2>&1 && pm2 reload acionar-backend-v3 || pm2 start src/server.mjs --name acionar-backend-v3
+            npx prisma generate
+            npm run build
+            pm2 describe acionar-backend-v3 > /dev/null 2>&1 && pm2 reload acionar-backend-v3 || pm2 start dist/main.js --name acionar-backend-v3
             pm2 save
