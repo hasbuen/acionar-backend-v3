@@ -41,7 +41,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$executeRawUnsafe(`CREATE SCHEMA IF NOT EXISTS "${schemaName}";`);
     await this.$executeRawUnsafe(`SET search_path TO "${schemaName}", public;`);
 
-    // Tables in tenant schema
+    // Run each table creation as a separate raw query to avoid prepared statement multi-command error (42601)
     await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS profissionais (
         id SERIAL PRIMARY KEY,
@@ -54,6 +54,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         senha_hash TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS servicos (
         id SERIAL PRIMARY KEY,
         nome VARCHAR(100) NOT NULL,
@@ -63,6 +66,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ativo BOOLEAN DEFAULT true,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS subservicos (
         id SERIAL PRIMARY KEY,
         servico_id INT REFERENCES servicos(id) ON DELETE CASCADE,
@@ -72,6 +78,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ativo BOOLEAN DEFAULT true,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS clientes (
         id SERIAL PRIMARY KEY,
         nome VARCHAR(100) NOT NULL,
@@ -80,6 +89,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         observacoes TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS agendamentos (
         id SERIAL PRIMARY KEY,
         cliente_id INT REFERENCES clientes(id) ON DELETE SET NULL,
@@ -95,6 +107,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         endereco_externo TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS fluxo_caixa (
         id SERIAL PRIMARY KEY,
         agendamento_id INT REFERENCES agendamentos(id) ON DELETE SET NULL,
@@ -107,6 +122,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         data_movimento DATE DEFAULT CURRENT_DATE,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS estoque_produtos (
         id SERIAL PRIMARY KEY,
         profissional_id INT REFERENCES profissionais(id) ON DELETE SET NULL,
@@ -118,6 +136,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         imagem_url TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
+    `);
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS estoque_movimentacoes (
         id SERIAL PRIMARY KEY,
         produto_id INT REFERENCES estoque_produtos(id) ON DELETE CASCADE,
