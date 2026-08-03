@@ -44,7 +44,6 @@ export class EstoqueService {
           produto.id, user.profissional_id, qtd
         );
 
-        // Amarração Automática com Fluxo de Caixa (Saída de Estoque)
         if (custo > 0) {
           const totalCusto = qtd * custo;
           await this.prisma.$queryRawUnsafe(
@@ -89,7 +88,6 @@ export class EstoqueService {
         produto_id, user.profissional_id, tipo, qtyNum, motivo || null
       );
 
-      // Amarração Automática no Caixa
       const custo = parseFloat(produto.custo_unitario || 0);
       if (custo > 0) {
         const total = qtyNum * custo;
@@ -107,6 +105,33 @@ export class EstoqueService {
       }
 
       return { movimentacao: movRes[0], nova_quantidade: novaQtd };
+    });
+  }
+
+  async transferProduto(tenantSlug: string, user: any, dto: any) {
+    const { produto_id, profissional_destino_id, quantidade } = dto;
+    if (!produto_id || !quantidade) {
+      throw new BadRequestException('Produto e quantidade são obrigatórios.');
+    }
+
+    const qtyNum = parseInt(quantidade, 10);
+    await this.prisma.ensureTenantSchema(tenantSlug);
+
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const prodRes: any = await this.prisma.$queryRawUnsafe('SELECT * FROM estoque_produtos WHERE id = $1', produto_id);
+      if (!prodRes || prodRes.length === 0) throw new NotFoundException('Produto não encontrado.');
+
+      const produto = prodRes[0];
+      const novaQtd = Math.max(0, produto.quantidade - qtyNum);
+      await this.prisma.$queryRawUnsafe('UPDATE estoque_produtos SET quantidade = $1 WHERE id = $2', novaQtd, produto_id);
+
+      await this.prisma.$queryRawUnsafe(
+        `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
+         VALUES ($1, $2, 'saida', $3, $4)`,
+        produto_id, user.profissional_id, qtyNum, `Transferência para profissional ${profissional_destino_id || 'auxiliar'}`
+      );
+
+      return { message: 'Transferência concluída com sucesso.', nova_quantidade: novaQtd };
     });
   }
 }
