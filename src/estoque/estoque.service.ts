@@ -17,6 +17,9 @@ export class EstoqueService {
     const { nome, tipo, quantidade, estoque_minimo, custo_unitario, imagem_url } = dto;
     if (!nome) throw new BadRequestException('Product name is required.');
 
+    const qtd = parseInt(quantidade || 0, 10);
+    const custo = parseFloat(custo_unitario || 0);
+
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const res: any = await this.prisma.$queryRawUnsafe(
@@ -26,20 +29,33 @@ export class EstoqueService {
         user.profissional_id,
         nome,
         tipo || 'consumo',
-        quantidade || 0,
+        qtd,
         estoque_minimo || 1,
-        custo_unitario || 0,
+        custo,
         imagem_url || null
       );
 
       const produto = res[0];
 
-      if (quantidade > 0) {
+      if (qtd > 0) {
         await this.prisma.$queryRawUnsafe(
           `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
            VALUES ($1, $2, 'entrada', $3, 'Estoque inicial cadastrado')`,
-          produto.id, user.profissional_id, quantidade
+          produto.id, user.profissional_id, qtd
         );
+
+        // Amarração Automática com Fluxo de Caixa (Saída de Estoque)
+        if (custo > 0) {
+          const totalCusto = qtd * custo;
+          await this.prisma.$queryRawUnsafe(
+            `INSERT INTO fluxo_caixa (
+              profissional_id, tipo, descricao, valor, status, forma_pagamento, data_movimento
+            ) VALUES ($1, 'saida', $2, $3, 'pago', 'pix', CURRENT_DATE)`,
+            user.profissional_id,
+            `Compra de Insumo/Produto: ${nome} (${qtd} un)`,
+            totalCusto
+          );
+        }
       }
 
       return { produto };
@@ -49,7 +65,7 @@ export class EstoqueService {
   async createMovimentacao(tenantSlug: string, user: any, dto: any) {
     const { produto_id, tipo, quantidade, motivo } = dto;
     if (!produto_id || !tipo || !quantidade) {
-      throw new BadRequestException('Product ID, Type, and Quantity are required.');
+      throw new BadRequestException('ID do Produto, Tipo e Quantidade são obrigatórios.');
     }
 
     const qtyNum = parseInt(quantidade, 10);
@@ -57,19 +73,15 @@ export class EstoqueService {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const prodRes: any = await this.prisma.$queryRawUnsafe(
-        'SELECT quantidade FROM estoque_produtos WHERE id = $1',
+        'SELECT * FROM estoque_produtos WHERE id = $1',
         produto_id
       );
-      if (!prodRes || prodRes.length === 0) throw new NotFoundException('Product not found.');
+      if (!prodRes || prodRes.length === 0) throw new NotFoundException('Produto não encontrado.');
 
-      const currentQty = parseInt(prodRes[0].quantidade || 0, 10);
-      let newQty = currentQty;
+      const produto = prodRes[0];
+      const novaQtd = tipo === 'entrada' ? produto.quantidade + qtyNum : Math.max(0, produto.quantidade - qtyNum);
 
-      if (tipo === 'entrada') newQty += qtyNum;
-      else if (tipo === 'saida') newQty = Math.max(0, currentQty - qtyNum);
-      else if (tipo === 'ajuste') newQty = qtyNum;
-
-      await this.prisma.$queryRawUnsafe('UPDATE estoque_produtos SET quantidade = $1 WHERE id = $2', newQty, produto_id);
+      await this.prisma.$queryRawUnsafe('UPDATE estoque_produtos SET quantidade = $1 WHERE id = $2', novaQtd, produto_id);
 
       const movRes: any = await this.prisma.$queryRawUnsafe(
         `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
@@ -77,38 +89,24 @@ export class EstoqueService {
         produto_id, user.profissional_id, tipo, qtyNum, motivo || null
       );
 
-      return {
-        message: 'Inventory movement recorded.',
-        movimentacao: movRes[0],
-        nova_quantidade: newQty,
-      };
-    });
-  }
+      // Amarração Automática no Caixa
+      const custo = parseFloat(produto.custo_unitario || 0);
+      if (custo > 0) {
+        const total = qtyNum * custo;
+        const desc = `${tipo === 'entrada' ? 'Compra/Entrada' : 'Baixa'} de Estoque: ${produto.nome} (${qtyNum} un)`;
 
-  async transferProduto(tenantSlug: string, user: any, dto: any) {
-    const { produto_id, profissional_id, quantidade } = dto;
-    const qtyNum = parseInt(quantidade, 10);
-    if (!produto_id || !profissional_id || !qtyNum || qtyNum < 1) throw new BadRequestException('Product, recipient and quantity are required.');
-
-    await this.prisma.ensureTenantSchema(tenantSlug);
-    return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const sourceRows: any = await this.prisma.$queryRawUnsafe('SELECT * FROM estoque_produtos WHERE id = $1', produto_id);
-      if (!sourceRows.length) throw new NotFoundException('Product not found.');
-      const source = sourceRows[0];
-      if (Number(source.quantidade) < qtyNum) throw new BadRequestException('Insufficient stock for this transfer.');
-      const recipientRows: any = await this.prisma.$queryRawUnsafe('SELECT id, nome FROM profissionais WHERE id = $1 AND ativo = true', profissional_id);
-      if (!recipientRows.length) throw new NotFoundException('Recipient professional not found.');
-
-      await this.prisma.$queryRawUnsafe('UPDATE estoque_produtos SET quantidade = quantidade - $1 WHERE id = $2', qtyNum, produto_id);
-      const targetRows: any = await this.prisma.$queryRawUnsafe('SELECT id FROM estoque_produtos WHERE profissional_id = $1 AND nome = $2 LIMIT 1', profissional_id, source.nome);
-      let targetId = targetRows[0]?.id;
-      if (targetId) await this.prisma.$queryRawUnsafe('UPDATE estoque_produtos SET quantidade = quantidade + $1 WHERE id = $2', qtyNum, targetId);
-      else {
-        const created: any = await this.prisma.$queryRawUnsafe(`INSERT INTO estoque_produtos (profissional_id, nome, tipo, quantidade, estoque_minimo, custo_unitario, imagem_url) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, profissional_id, source.nome, source.tipo, qtyNum, source.estoque_minimo, source.custo_unitario, source.imagem_url);
-        targetId = created[0].id;
+        await this.prisma.$queryRawUnsafe(
+          `INSERT INTO fluxo_caixa (
+            profissional_id, tipo, descricao, valor, status, forma_pagamento, data_movimento
+          ) VALUES ($1, $2, $3, $4, 'pago', 'pix', CURRENT_DATE)`,
+          user.profissional_id,
+          tipo === 'entrada' ? 'saida' : 'entrada',
+          desc,
+          total
+        );
       }
-      await this.prisma.$queryRawUnsafe(`INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo) VALUES ($1, $2, 'saida', $3, $4), ($5, $6, 'entrada', $7, $8)`, produto_id, user.profissional_id, qtyNum, `Envio para ${recipientRows[0].nome}`, targetId, profissional_id, qtyNum, `Recebido de ${user.nome || 'outro auxiliar'}`);
-      return { message: 'Product transferred successfully.', produto_origem_id: produto_id, produto_destino_id: targetId, quantidade: qtyNum, profissional_destino: recipientRows[0] };
+
+      return { movimentacao: movRes[0], nova_quantidade: novaQtd };
     });
   }
 }
