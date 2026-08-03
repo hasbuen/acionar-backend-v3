@@ -25,11 +25,11 @@ export class AgendamentosService {
 
       if (data_inicio) {
         params.push(data_inicio);
-        sql += ` AND a.data_hora >= $${params.length}`;
+        sql += ` AND a.data_hora >= $${params.length}::timestamptz`;
       }
       if (data_fim) {
         params.push(data_fim);
-        sql += ` AND a.data_hora <= $${params.length}`;
+        sql += ` AND a.data_hora <= $${params.length}::timestamptz`;
       }
       if (status) {
         params.push(status);
@@ -59,7 +59,7 @@ export class AgendamentosService {
         `INSERT INTO agendamentos (
           cliente_id, profissional_id, servico_id, subservico_id,
           data_hora, valor_total, observacao, tipo_atendimento, endereco_externo, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        ) VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10) RETURNING *`,
         cliente_id || null,
         profissional_id || user.profissional_id,
         servico_id,
@@ -83,11 +83,11 @@ export class AgendamentosService {
       const res: any = await this.prisma.$queryRawUnsafe(
         `UPDATE agendamentos
          SET status = COALESCE($1, status),
-             data_hora = COALESCE($2, data_hora),
+             data_hora = CASE WHEN $2::text IS NOT NULL THEN $2::timestamptz ELSE data_hora END,
              valor_total = COALESCE($3, valor_total),
              observacao = COALESCE($4, observacao)
          WHERE id = $5 RETURNING *`,
-        status, data_hora, valor_total, observacao, id
+        status, data_hora || null, valor_total, observacao, id
       );
 
       if (!res || res.length === 0) throw new NotFoundException('Appointment not found.');

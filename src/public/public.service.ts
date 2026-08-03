@@ -117,12 +117,12 @@ export class PublicService {
         }
       }
 
-      // 3. Create appointment
+      // 3. Create appointment with timestamptz cast
       const apptRes: any = await this.prisma.$queryRawUnsafe(
         `INSERT INTO agendamentos (
           cliente_id, profissional_id, servico_id, subservico_id, data_hora,
           duracao_total_minutos, valor_total, status, observacao, tipo_atendimento, endereco_externo
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'aguardando_confirmacao', $8, $9, $10)
+        ) VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, 'aguardando_confirmacao', $8, $9, $10)
         RETURNING *`,
         clienteId,
         profissional_id || null,
