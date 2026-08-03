@@ -9,7 +9,27 @@ export class EstoqueService {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const produtos: any = await this.prisma.$queryRawUnsafe('SELECT * FROM estoque_produtos ORDER BY nome ASC');
-      return { produtos };
+      
+      let totalValor = 0;
+      let produtosAlerta = 0;
+      
+      produtos.forEach((p: any) => {
+        const valor = parseFloat(p.custo_unitario || 0) * (p.quantidade || 0);
+        totalValor += valor;
+        if (p.quantidade <= p.estoque_minimo) {
+          produtosAlerta++;
+        }
+      });
+
+      return {
+        produtos,
+        resumo: {
+          total_produtos: produtos.length,
+          valor_total_estoque: Math.round(totalValor * 100) / 100,
+          produtos_em_alerta: produtosAlerta,
+          estado_geral: produtosAlerta > 0 ? 'com-alertas' : 'ok'
+        }
+      };
     });
   }
 
@@ -132,6 +152,62 @@ export class EstoqueService {
       );
 
       return { message: 'Transferência concluída com sucesso.', nova_quantidade: novaQtd };
+    });
+  }
+
+  async findMovimentacoes(tenantSlug: string, query: any) {
+    const { produto_id, tipo, data_inicio, data_fim } = query;
+    await this.prisma.ensureTenantSchema(tenantSlug);
+
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      let sql = `
+        SELECT em.*, ep.nome as produto_nome, p.nome as profissional_nome
+        FROM estoque_movimentacoes em
+        JOIN estoque_produtos ep ON em.produto_id = ep.id
+        LEFT JOIN profissionais p ON em.profissional_id = p.id
+        WHERE 1=1
+      `;
+      const params: any[] = [];
+
+      if (produto_id) {
+        params.push(produto_id);
+        sql += ` AND em.produto_id = $${params.length}`;
+      }
+      if (tipo) {
+        params.push(tipo);
+        sql += ` AND em.tipo = $${params.length}`;
+      }
+      if (data_inicio) {
+        params.push(data_inicio);
+        sql += ` AND em.created_at >= $${params.length}::date`;
+      }
+      if (data_fim) {
+        params.push(data_fim);
+        sql += ` AND em.created_at <= $${params.length}::date`;
+      }
+
+      sql += ' ORDER BY em.created_at DESC LIMIT 200';
+
+      const movimentacoes: any = await this.prisma.$queryRawUnsafe(sql, ...params);
+      return { movimentacoes };
+    });
+  }
+
+  async findAlerts(tenantSlug: string) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const alertas: any = await this.prisma.$queryRawUnsafe(
+        `SELECT id, nome, quantidade, estoque_minimo, (estoque_minimo - quantidade) as deficit
+         FROM estoque_produtos
+         WHERE quantidade <= estoque_minimo
+         ORDER BY deficit DESC`
+      );
+
+      return {
+        alertas,
+        total_alertas: alertas.length,
+        urgencia: alertas.length > 5 ? 'alta' : alertas.length > 0 ? 'media' : 'nenhuma'
+      };
     });
   }
 }

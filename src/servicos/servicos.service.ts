@@ -10,10 +10,28 @@ export class ServicosService {
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const servicos: any = await this.prisma.$queryRawUnsafe('SELECT * FROM servicos ORDER BY nome ASC');
       const subservicos: any = await this.prisma.$queryRawUnsafe('SELECT * FROM subservicos ORDER BY nome ASC');
+      const materiaisServico: any = await this.prisma.$queryRawUnsafe(`
+        SELECT sp.servico_id, sp.produto_id, sp.quantidade_usada, ep.nome as produto_nome
+        FROM servico_produtos sp
+        JOIN estoque_produtos ep ON sp.produto_id = ep.id
+        ORDER BY ep.nome ASC
+      `);
+      const materiaisSubservico: any = await this.prisma.$queryRawUnsafe(`
+        SELECT ssp.subservico_id, ssp.produto_id, ssp.quantidade_usada, ep.nome as produto_nome
+        FROM subservico_produtos ssp
+        JOIN estoque_produtos ep ON ssp.produto_id = ep.id
+        ORDER BY ep.nome ASC
+      `);
 
       const result = servicos.map(s => ({
         ...s,
-        subservicos: subservicos.filter(sub => sub.servico_id === s.id),
+        produtos: materiaisServico.filter(link => link.servico_id === s.id),
+        subservicos: subservicos
+          .filter(sub => sub.servico_id === s.id)
+          .map(sub => ({
+            ...sub,
+            produtos: materiaisSubservico.filter(link => link.subservico_id === sub.id),
+          })),
       }));
 
       return { servicos: result };
@@ -52,6 +70,94 @@ export class ServicosService {
 
       if (!res || res.length === 0) throw new NotFoundException('Service not found.');
       return { servico: res[0] };
+    });
+  }
+
+  async vincularProduto(tenantSlug: string, servicoId: number, dto: any) {
+    const { produto_id, quantidade_usada } = dto;
+    if (!produto_id) throw new BadRequestException('Product ID is required.');
+
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const res: any = await this.prisma.$queryRawUnsafe(
+        `INSERT INTO servico_produtos (servico_id, produto_id, quantidade_usada)
+         VALUES ($1, $2, $3) 
+         ON CONFLICT (servico_id, produto_id) DO UPDATE SET quantidade_usada = $3
+         RETURNING *`,
+        servicoId, produto_id, quantidade_usada || 1
+      );
+      return { vinculo: res[0] };
+    });
+  }
+
+  async removerVinculoProduto(tenantSlug: string, servicoId: number, produtoId: number) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const res: any = await this.prisma.$queryRawUnsafe(
+        'DELETE FROM servico_produtos WHERE servico_id = $1 AND produto_id = $2 RETURNING id',
+        servicoId, produtoId
+      );
+      if (!res || res.length === 0) throw new NotFoundException('Link not found.');
+      return { message: 'Product link removed successfully.' };
+    });
+  }
+
+  async listarProdutosServico(tenantSlug: string, servicoId: number) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const produtos: any = await this.prisma.$queryRawUnsafe(
+        `SELECT ep.*, sp.quantidade_usada 
+         FROM servico_produtos sp
+         JOIN estoque_produtos ep ON sp.produto_id = ep.id
+         WHERE sp.servico_id = $1
+         ORDER BY ep.nome ASC`,
+        servicoId
+      );
+      return { produtos };
+    });
+  }
+
+  async vincularProdutoSubservico(tenantSlug: string, subservicoId: number, dto: any) {
+    const { produto_id, quantidade_usada } = dto;
+    if (!produto_id) throw new BadRequestException('Product ID is required.');
+
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const res: any = await this.prisma.$queryRawUnsafe(
+        `INSERT INTO subservico_produtos (subservico_id, produto_id, quantidade_usada)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (subservico_id, produto_id) DO UPDATE SET quantidade_usada = $3
+         RETURNING *`,
+        subservicoId, produto_id, quantidade_usada || 1
+      );
+      return { vinculo: res[0] };
+    });
+  }
+
+  async removerVinculoProdutoSubservico(tenantSlug: string, subservicoId: number, produtoId: number) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const res: any = await this.prisma.$queryRawUnsafe(
+        'DELETE FROM subservico_produtos WHERE subservico_id = $1 AND produto_id = $2 RETURNING id',
+        subservicoId, produtoId
+      );
+      if (!res || res.length === 0) throw new NotFoundException('Link not found.');
+      return { message: 'Product link removed successfully.' };
+    });
+  }
+
+  async listarProdutosSubservico(tenantSlug: string, subservicoId: number) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const produtos: any = await this.prisma.$queryRawUnsafe(
+        `SELECT ep.*, ssp.quantidade_usada
+         FROM subservico_produtos ssp
+         JOIN estoque_produtos ep ON ssp.produto_id = ep.id
+         WHERE ssp.subservico_id = $1
+         ORDER BY ep.nome ASC`,
+        subservicoId
+      );
+      return { produtos };
     });
   }
 }

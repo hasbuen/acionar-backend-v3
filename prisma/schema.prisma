@@ -68,6 +68,7 @@ model Servico {
 
   subservicos  Subservico[]
   agendamentos Agendamento[]
+  produtos     ServicoProduto[]
 
   @@map("servicos")
   @@schema("tenant")
@@ -84,6 +85,7 @@ model Subservico {
 
   servico      Servico       @relation(fields: [servico_id], references: [id], onDelete: Cascade)
   agendamentos Agendamento[]
+  produtos     SubservicoProduto[]
 
   @@map("subservicos")
   @@schema("tenant")
@@ -112,11 +114,13 @@ model Agendamento {
   data_hora             DateTime @db.Timestamptz
   duracao_total_minutos Int      @default(60)
   valor_total           Decimal  @default(0.00) @db.Decimal(10, 2)
-  status                String   @default("agendado") @db.VarChar(30)
+  status                String   @default("agendado") @db.VarChar(20)
   observacao            String?
   tipo_atendimento      String   @default("salao") @db.VarChar(30)
   endereco_externo      String?
+  estoque_consumido     Boolean  @default(false)
   created_at            DateTime @default(now()) @db.Timestamptz
+  updated_at            DateTime @default(now()) @updatedAt @db.Timestamptz
 
   cliente      Cliente?      @relation(fields: [cliente_id], references: [id], onDelete: SetNull)
   profissional Profissional? @relation(fields: [profissional_id], references: [id], onDelete: SetNull)
@@ -133,6 +137,7 @@ model FluxoCaixa {
   agendamento_id  Int?
   profissional_id Int?
   tipo            String   @db.VarChar(20)
+  categoria       String   @default("servico") @db.VarChar(50)
   descricao       String   @db.VarChar(255)
   valor           Decimal  @db.Decimal(10, 2)
   status          String   @default("pago") @db.VarChar(20)
@@ -158,8 +163,10 @@ model EstoqueProduto {
   imagem_url      String?
   created_at      DateTime @default(now()) @db.Timestamptz
 
-  profissional  Profissional?         @relation(fields: [profissional_id], references: [id], onDelete: SetNull)
-  movimentacoes EstoqueMovimentacao[]
+  profissional      Profissional?         @relation(fields: [profissional_id], references: [id], onDelete: SetNull)
+  movimentacoes     EstoqueMovimentacao[]
+  servicos          ServicoProduto[]      @relation("ServicoProdutos")
+  subservicos       SubservicoProduto[]   @relation("SubservicoProdutos")
 
   @@map("estoque_produtos")
   @@schema("tenant")
@@ -178,5 +185,35 @@ model EstoqueMovimentacao {
   profissional Profissional?   @relation(fields: [profissional_id], references: [id], onDelete: SetNull)
 
   @@map("estoque_movimentacoes")
+  @@schema("tenant")
+}
+
+model ServicoProduto {
+  id              Int      @id @default(autoincrement())
+  servico_id      Int
+  produto_id      Int
+  quantidade_usada Int      @default(1)
+  created_at      DateTime @default(now()) @db.Timestamptz
+
+  servico Servico       @relation(fields: [servico_id], references: [id], onDelete: Cascade)
+  produto EstoqueProduto @relation("ServicoProdutos", fields: [produto_id], references: [id], onDelete: Cascade)
+
+  @@unique([servico_id, produto_id])
+  @@map("servico_produtos")
+  @@schema("tenant")
+}
+
+model SubservicoProduto {
+  id              Int      @id @default(autoincrement())
+  subservico_id   Int
+  produto_id      Int
+  quantidade_usada Int      @default(1)
+  created_at      DateTime @default(now()) @db.Timestamptz
+
+  subservico Subservico     @relation(fields: [subservico_id], references: [id], onDelete: Cascade)
+  produto    EstoqueProduto @relation("SubservicoProdutos", fields: [produto_id], references: [id], onDelete: Cascade)
+
+  @@unique([subservico_id, produto_id])
+  @@map("subservico_produtos")
   @@schema("tenant")
 }
