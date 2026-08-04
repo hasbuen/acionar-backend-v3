@@ -241,6 +241,32 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
       `);
+
+      await tenantClient.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS configuracoes (
+          chave VARCHAR(100) PRIMARY KEY,
+          valor JSONB NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS servico_produtos (
+          servico_id INT REFERENCES servicos(id) ON DELETE CASCADE,
+          produto_id INT REFERENCES estoque_produtos(id) ON DELETE CASCADE,
+          quantidade_usada DECIMAL(10, 2) NOT NULL DEFAULT 1.00,
+          PRIMARY KEY (servico_id, produto_id)
+        );
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS subservico_produtos (
+          subservico_id INT REFERENCES subservicos(id) ON DELETE CASCADE,
+          produto_id INT REFERENCES estoque_produtos(id) ON DELETE CASCADE,
+          quantidade_usada DECIMAL(10, 2) NOT NULL DEFAULT 1.00,
+          PRIMARY KEY (subservico_id, produto_id)
+        );
+      `);
     } catch (err) {
       console.error(`[DATABASE MULTI-TENANT] Falha crítica de migração DDL no banco ${dbName}:`, err.message);
     }
