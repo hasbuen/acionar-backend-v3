@@ -62,7 +62,47 @@ export class AuthService {
 
   async login(dto: any) {
     const { slug, email, senha } = dto;
-    const cleanSlug = (slug || '').toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    
+    let resolvedSlug = slug;
+
+    if (!resolvedSlug) {
+      // 1. Tentar encontrar o tenant na tabela global public.tenants onde email_proprietario = email
+      const matchingTenant = await this.prisma.tenant.findFirst({
+        where: { email_proprietario: email.toLowerCase().trim() }
+      });
+      if (matchingTenant) {
+        resolvedSlug = matchingTenant.slug;
+      } else {
+        // 2. Senão, listar todos os tenants e procurar nos profissionais de cada schema
+        const allTenants = await this.prisma.tenant.findMany({
+          select: { slug: true }
+        });
+        
+        for (const t of allTenants) {
+          try {
+            await this.prisma.ensureTenantSchema(t.slug);
+            const users: any = await this.prisma.runInTenantSchema(t.slug, async () => {
+              return await this.prisma.$queryRawUnsafe(
+                'SELECT id FROM profissionais WHERE email = $1',
+                email.toLowerCase().trim()
+              );
+            });
+            if (users && users.length > 0) {
+              resolvedSlug = t.slug;
+              break;
+            }
+          } catch (e) {
+            // Ignorar erros em schemas individuais
+          }
+        }
+      }
+    }
+
+    if (!resolvedSlug) {
+      throw new UnauthorizedException('Invalid credentials.');
+    }
+
+    const cleanSlug = resolvedSlug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
 
     const tenant = await this.prisma.tenant.findUnique({ where: { slug: cleanSlug } });
     if (!tenant) {
