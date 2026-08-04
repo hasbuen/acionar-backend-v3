@@ -41,10 +41,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     
     try {
       const url = new URL(baseUrl);
-      url.pathname = `/acionar_tenant_${safeSlug}`;
+      url.pathname = `/tenant_${safeSlug}`;
       return url.toString();
     } catch (e) {
-      return baseUrl.replace(/\/acionar_v3(\?|$)/, `/acionar_tenant_${safeSlug}$1`);
+      return baseUrl.replace(/\/acionar_v3(\?|$)/, `/tenant_${safeSlug}$1`);
     }
   }
 
@@ -113,7 +113,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       .toLowerCase()
       .trim()
       .replace(/[^a-z0-9_]/g, '_');
-    const dbName = `acionar_tenant_${safeSlug}`;
+    const dbName = `tenant_${safeSlug}`;
 
     // 1. Tentar criar o banco de dados físico se ele não existir
     try {
