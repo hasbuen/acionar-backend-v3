@@ -101,7 +101,12 @@ export class AgendamentosService {
              profissional_id = COALESCE($5, profissional_id),
              updated_at = NOW()
          WHERE id = $6 RETURNING *`,
-        status, data_hora || null, valor_total, observacao, profissional_id, id
+        status !== undefined ? status : null,
+        data_hora !== undefined && data_hora !== '' ? data_hora : null,
+        valor_total !== undefined ? valor_total : null,
+        observacao !== undefined ? observacao : null,
+        profissional_id !== undefined ? profissional_id : null,
+        id
       );
 
       // Se status mudou para "concluido", consumir produtos
