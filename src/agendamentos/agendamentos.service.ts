@@ -59,7 +59,7 @@ export class AgendamentosService {
         `INSERT INTO agendamentos (
           cliente_id, profissional_id, servico_id, subservico_id,
           data_hora, valor_total, observacao, tipo_atendimento, endereco_externo, status
-        ) VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10) RETURNING *`,
+        ) VALUES ($1, $2, $3, $4, $5::timestamptz, $6::numeric, $7, $8, $9, $10) RETURNING *`,
         cliente_id || null,
         profissional_id || user.profissional_id,
         servico_id,
@@ -96,7 +96,7 @@ export class AgendamentosService {
         `UPDATE agendamentos
          SET status = COALESCE($1, status),
              data_hora = CASE WHEN $2::text IS NOT NULL THEN $2::timestamptz ELSE data_hora END,
-             valor_total = COALESCE($3, valor_total),
+             valor_total = COALESCE($3::numeric, valor_total),
              observacao = COALESCE($4, observacao),
              profissional_id = COALESCE($5, profissional_id),
              updated_at = NOW()
