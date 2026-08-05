@@ -68,10 +68,10 @@ export class EstoqueService {
           const totalCusto = qtd * custo;
           await this.prisma.$queryRawUnsafe(
             `INSERT INTO fluxo_caixa (
-              profissional_id, tipo, descricao, valor, status, forma_pagamento, data_movimento
-            ) VALUES ($1, 'saida', $2, $3, 'pago', 'pix', CURRENT_DATE)`,
+              profissional_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento
+            ) VALUES ($1, 'saida', 'material', $2, $3, 'pago', 'dinheiro', CURRENT_DATE)`,
             user.profissional_id,
-            `Compra de Insumo/Produto: ${nome} (${qtd} un)`,
+            `Compra de Insumo: ${nome} (${qtd} un × R$ ${custo.toFixed(2)})`,
             totalCusto
           );
         }
@@ -109,16 +109,16 @@ export class EstoqueService {
       );
 
       const custo = parseFloat(produto.custo_unitario || 0);
-      if (custo > 0) {
+      if (custo > 0 && tipo === 'entrada') {
+        // Só registra saída no caixa em entradas de reposição (compra de mais unidades)
         const total = qtyNum * custo;
-        const desc = `${tipo === 'entrada' ? 'Compra/Entrada' : 'Baixa'} de Estoque: ${produto.nome} (${qtyNum} un)`;
+        const desc = `Reposição de Estoque: ${produto.nome} (${qtyNum} un × R$ ${custo.toFixed(2)})`;
 
         await this.prisma.$queryRawUnsafe(
           `INSERT INTO fluxo_caixa (
-            profissional_id, tipo, descricao, valor, status, forma_pagamento, data_movimento
-          ) VALUES ($1, $2, $3, $4, 'pago', 'pix', CURRENT_DATE)`,
+            profissional_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento
+          ) VALUES ($1, 'saida', 'material', $2, $3, 'pago', 'dinheiro', CURRENT_DATE)`,
           user.profissional_id,
-          tipo === 'entrada' ? 'saida' : 'entrada',
           desc,
           total
         );
