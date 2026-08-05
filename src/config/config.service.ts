@@ -12,24 +12,21 @@ export class ConfigService {
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const rows: any = await this.prisma.$queryRawUnsafe('SELECT valor FROM configuracoes WHERE chave = $1', 'pagamentos');
       const settings = rows[0] || { asaas_enabled: false, asaas_environment: 'sandbox', pix_key: '', pix_key_type: 'aleatoria' };
-      return { settings: { ...settings, asaas_api_key: undefined, asaas_api_key_configured: Boolean(settings.asaas_api_key) } };
+      return { settings };
     });
   }
 
   async updatePaymentConfig(tenantSlug: string, dto: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const currentRows: any = await this.prisma.$queryRawUnsafe('SELECT valor FROM configuracoes WHERE chave = $1', 'pagamentos');
-      const current = currentRows[0] || {};
       const settings = {
         asaas_enabled: Boolean(dto.asaas_enabled),
         asaas_environment: dto.asaas_environment === 'production' ? 'production' : 'sandbox',
         pix_key: String(dto.pix_key || '').trim(),
         pix_key_type: String(dto.pix_key_type || 'aleatoria'),
-        asaas_api_key: dto.asaas_api_key ? String(dto.asaas_api_key).trim() : current.asaas_api_key || ''
       };
       await this.prisma.$executeRawUnsafe('INSERT INTO configuracoes (chave, valor, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()', 'pagamentos', JSON.stringify(settings));
-      return { message: 'Payment configuration saved.', settings: { ...settings, asaas_api_key: undefined, asaas_api_key_configured: Boolean(settings.asaas_api_key) } };
+      return { message: 'Payment configuration saved.', settings };
     });
   }
 

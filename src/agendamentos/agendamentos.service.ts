@@ -193,44 +193,85 @@ export class AgendamentosService {
   async getPaymentData(tenantSlug: string, id: number) {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      // Buscar configuração
       const confRes: any = await this.prisma.$queryRawUnsafe('SELECT valor FROM configuracoes WHERE chave = $1', 'pagamentos');
       const config = confRes[0]?.valor || confRes[0] || {};
       
-      // Buscar agendamento
       const agendRes: any = await this.prisma.$queryRawUnsafe(
-        'SELECT a.*, c.nome as cliente_nome FROM agendamentos a LEFT JOIN clientes c ON a.cliente_id = c.id WHERE a.id = $1',
+        'SELECT a.*, c.nome as cliente_nome, c.whatsapp as cliente_whatsapp FROM agendamentos a LEFT JOIN clientes c ON a.cliente_id = c.id WHERE a.id = $1',
         id
       );
       if (!agendRes || agendRes.length === 0) throw new NotFoundException('Appointment not found.');
       const agendamento = agendRes[0];
       
       const valorFinal = Number(agendamento.valor_total || 0).toFixed(2);
-      const clienteNome = (agendamento.cliente_nome || 'Cliente').substring(0, 15).replace(/[^a-zA-Z0-9 ]/g, '');
+      const clienteNomeOriginal = agendamento.cliente_nome || 'Cliente';
+      const clienteNome = clienteNomeOriginal.substring(0, 15).replace(/[^a-zA-Z0-9 ]/g, '');
+      const clientePhone = agendamento.cliente_whatsapp || '';
       
       let pixKey = '';
       let paymentLink = '';
       
       const asaasEnabled = Boolean(config.asaas_enabled);
-      
-      // Lógica do Asaas seria inserida aqui (chamada API para criar cobrança)
-      // Se não habilitado ou se falhar, cai no fallback manual
+      const asaasApiKey = process.env.ASAAS_API_KEY;
+      const asaasUrl = process.env.ASAAS_URL || 'https://sandbox.asaas.com/api/v3';
+
+      if (asaasEnabled && asaasApiKey && asaasApiKey !== 'SUA_CHAVE_ASAAS_AQUI') {
+        try {
+          // 1. Criar cliente no Asaas
+          const customerRes = await fetch(`${asaasUrl}/customers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'access_token': asaasApiKey },
+            body: JSON.stringify({ name: clienteNomeOriginal, mobilePhone: clientePhone })
+          });
+          const customerData = await customerRes.json();
+          const customerId = customerData.id;
+
+          if (!customerId) {
+            console.error('Asaas Customer Error:', customerData);
+            throw new Error('Falha ao criar cliente no Asaas');
+          }
+
+          // 2. Criar cobrança Pix
+          const paymentRes = await fetch(`${asaasUrl}/payments`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'access_token': asaasApiKey },
+            body: JSON.stringify({
+              customer: customerId,
+              billingType: 'PIX',
+              value: Number(valorFinal),
+              dueDate: new Date(Date.now() + 86400000).toISOString().split('T')[0], // amanhã
+              description: `Agendamento #${agendamento.id} - ${tenantSlug}`,
+              externalReference: `${tenantSlug}_${agendamento.id}`
+            })
+          });
+          const paymentData = await paymentRes.json();
+          const paymentId = paymentData.id;
+          paymentLink = paymentData.invoiceUrl;
+
+          if (paymentId) {
+            // 3. Obter payload do Pix
+            const qrCodeRes = await fetch(`${asaasUrl}/payments/${paymentId}/pixQrCode`, {
+              method: 'GET',
+              headers: { 'access_token': asaasApiKey }
+            });
+            const qrCodeData = await qrCodeRes.json();
+            pixKey = qrCodeData.payload;
+          }
+        } catch (error) {
+          console.error('Erro na integração Asaas:', error);
+          // Falha silenciosa: cai no fallback
+        }
+      }
       
       if (!pixKey) {
-        // Fallback manual usando a chave da configuração (se existir)
+        // Fallback manual usando a chave Pix do Tenant
         const chavePix = config.pix_key || 'acionar';
         const identificador = agendamento.id;
-        
-        // Simulação do BR Code básico gerado no backend
         pixKey = `00020126580014BR.GOV.BCB.PIX0136${chavePix}5204000053039865405${valorFinal}5802BR5915${clienteNome}6009SAO PAULO62070503***6304E2CA`;
         paymentLink = `https://acionar.app/pay/${identificador}?v=${valorFinal}`;
       }
       
-      return {
-        pixKey,
-        paymentLink,
-        valorFinal
-      };
+      return { pixKey, paymentLink, valorFinal };
     });
   }
 }
