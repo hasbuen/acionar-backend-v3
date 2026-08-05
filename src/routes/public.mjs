@@ -1,6 +1,7 @@
 import express from 'express';
 import { queryPublic, queryTenant } from '../db/postgres.mjs';
 import { initTenantSchema } from '../db/migrations.mjs';
+import { sendPushNotification } from '../services/push.mjs';
 
 const router = express.Router();
 
@@ -124,7 +125,7 @@ router.post('/tenant/:slug/agendamentos', async (req, res) => {
     }
 
     // 2. Fetch service duration & price
-    const servRes = await queryTenant(slug, 'SELECT preco, duracao_minutos FROM servicos WHERE id = $1', [servico_id]);
+    const servRes = await queryTenant(slug, 'SELECT nome, preco, duracao_minutos FROM servicos WHERE id = $1', [servico_id]);
     if (servRes.rows.length === 0) {
       return res.status(404).json({ error: 'Selected service not found.' });
     }
@@ -161,6 +162,30 @@ router.post('/tenant/:slug/agendamentos', async (req, res) => {
         endereco_externo || null
       ]
     );
+
+    // Trigger push notification to active subscribers
+    const serviceName = servRes.rows[0]?.nome || 'Serviço';
+    const dateFormatted = new Date(data_hora).toLocaleDateString('pt-BR');
+    const timeFormatted = new Date(data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const localLabel = tipo_atendimento === 'cliente' || tipo_atendimento === 'externo' ? 'No local do cliente' : 'No salão';
+
+    sendPushNotification(slug, {
+      title: `Novo agendamento: ${cliente_nome}`,
+      body: `Serviço: ${serviceName}\nData: ${dateFormatted} às ${timeFormatted}\nLocal: ${localLabel}`,
+      url: '/',
+      agendamento_id: agendamentoRes.rows[0].id,
+      tag: `new-agendamento-${agendamentoRes.rows[0].id}`,
+      data: {
+        url: '/',
+        agendamento_id: agendamentoRes.rows[0].id,
+        clienteNome: cliente_nome,
+        servicoNome: serviceName,
+        data: dateFormatted,
+        hora: timeFormatted,
+        local: localLabel,
+        kind: 'new'
+      }
+    }).catch(err => console.error('[PUBLIC PUSH TRIGGER ERROR]', err));
 
     res.status(201).json({
       message: 'Appointment requested successfully.',

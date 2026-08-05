@@ -48,6 +48,11 @@ router.get('/', async (req, res) => {
       sql += ` AND a.profissional_id = $${params.length}`;
     }
 
+    if (req.user.cargo === 'auxiliar') {
+      params.push(req.user.profissional_id);
+      sql += ` AND (a.profissional_id = $${params.length} OR (a.profissional_id IS NULL AND a.status IN ('aguardando_confirmacao', 'solicitado', 'pendente')))`;
+    }
+
     sql += ' ORDER BY a.data_hora ASC';
 
     const result = await queryTenant(tenant_slug, sql, params);
@@ -103,6 +108,19 @@ router.put('/:id', async (req, res) => {
   try {
     const { tenant_slug } = req.user;
     const { id } = req.params;
+
+    if (req.user.cargo === 'auxiliar') {
+      const checkRes = await queryTenant(tenant_slug, 'SELECT profissional_id, status FROM agendamentos WHERE id = $1', [id]);
+      if (checkRes.rows.length === 0) {
+        return res.status(404).json({ error: 'Appointment not found.' });
+      }
+      const ag = checkRes.rows[0];
+      const isUnassigned = !ag.profissional_id && ['aguardando_confirmacao', 'solicitado', 'pendente'].includes(ag.status);
+      const isMine = Number(ag.profissional_id) === Number(req.user.profissional_id);
+      if (!isMine && !isUnassigned) {
+        return res.status(403).json({ error: 'You do not have permission to update this appointment.' });
+      }
+    }
     const { status, data_hora, valor_total, observacao, profissional_id } = req.body;
 
     const result = await queryTenant(

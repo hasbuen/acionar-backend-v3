@@ -13,6 +13,7 @@ import clientesRoutes from './routes/clientes.mjs';
 import caixaRoutes from './routes/caixa.mjs';
 import estoqueRoutes from './routes/estoque.mjs';
 import profissionaisRoutes from './routes/profissionais.mjs';
+import notificationsRoutes from './routes/notifications.mjs';
 
 dotenv.config();
 
@@ -23,6 +24,9 @@ const PORT = process.env.PORT || 3001;
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Serve uploaded logos statically
+app.use('/uploads', express.static('uploads'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -43,6 +47,7 @@ app.use('/api/clientes', clientesRoutes);
 app.use('/api/caixa', caixaRoutes);
 app.use('/api/estoque', estoqueRoutes);
 app.use('/api/profissionais', profissionaisRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 // Global 404 handler
 app.use((req, res) => {

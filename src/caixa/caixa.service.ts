@@ -1,8 +1,8 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
-// Statuses de agendamento que geram lançamento pendente no caixa
-const STATUSES_PENDENTES = ['confirmado', 'em_atendimento'];
+// Statuses de agendamento que são excluídos do fluxo de caixa
+const STATUSES_EXCLUIDOS = ['cancelado', 'aguardando_confirmacao', 'solicitado'];
 
 @Injectable()
 export class CaixaService {
@@ -65,7 +65,6 @@ export class CaixaService {
         .map((r) => Number(r.agendamento_id));
 
       // ─── 2. Busca agendamentos pendentes sem lançamento ───────────────
-      // Usa = ANY($1::int[]) para evitar NOT IN () inválido com lista vazia
       let sqlAG =
         `SELECT a.id, a.data_hora, a.valor_total, a.status,
                 c.nome as cliente_nome,
@@ -73,14 +72,14 @@ export class CaixaService {
          FROM agendamentos a
          LEFT JOIN clientes c ON a.cliente_id = c.id
          LEFT JOIN servicos s ON a.servico_id = s.id
-         WHERE a.status = ANY($1::text[])
+         WHERE a.status <> ALL($1::text[])
            AND (
              $2::int[] IS NULL
              OR array_length($2::int[], 1) IS NULL
              OR a.id <> ALL($2::int[])
            )`;
       const paramsAG: any[] = [
-        STATUSES_PENDENTES,       // $1 — array de statuses válidos
+        STATUSES_EXCLUIDOS,       // $1 — array de statuses a excluir
         agIdsComLancamento,       // $2 — IDs já lançados (pode ser array vazio)
       ];
 
@@ -98,21 +97,24 @@ export class CaixaService {
       const agendamentosOrfaos: any[] = await this.prisma.$queryRawUnsafe(sqlAG, ...paramsAG);
 
       // ─── 3. Transforma agendamentos em lançamentos virtuais ──────────
-      const lancamentosVirtuais = agendamentosOrfaos.map((ag) => ({
-        id: `ag-${ag.id}`,
-        agendamento_id: ag.id,
-        profissional_id: null,
-        tipo: 'entrada',
-        categoria: 'agendamento',
-        descricao: `Atendimento — ${ag.cliente_nome || 'Cliente'} / ${ag.servico_nome || 'Serviço'}`,
-        valor: ag.valor_total ?? 0,
-        status: 'pendente',
-        forma_pagamento: null,
-        data_movimento: ag.data_hora,
-        cliente_nome: ag.cliente_nome,
-        servico_nome: ag.servico_nome,
-        origem: 'agendamento',
-      }));
+      const lancamentosVirtuais = agendamentosOrfaos.map((ag) => {
+        const isPaid = ['pago', 'recebido', 'quitado'].includes(String(ag.status).toLowerCase());
+        return {
+          id: `ag-${ag.id}`,
+          agendamento_id: ag.id,
+          profissional_id: null,
+          tipo: 'entrada',
+          categoria: 'agendamento',
+          descricao: `Atendimento — ${ag.cliente_nome || 'Cliente'} / ${ag.servico_nome || 'Serviço'}`,
+          valor: ag.valor_total ?? 0,
+          status: isPaid ? 'pago' : 'pendente',
+          forma_pagamento: isPaid ? 'pix' : null,
+          data_movimento: ag.data_hora,
+          cliente_nome: ag.cliente_nome,
+          servico_nome: ag.servico_nome,
+          origem: 'agendamento',
+        };
+      });
 
       // ─── 4. Mescla e ordena por data desc ────────────────────────────
       const movimentacoes = [...lancamentosReais, ...lancamentosVirtuais].sort((a, b) => {
@@ -244,7 +246,7 @@ export class CaixaService {
            LEFT JOIN servicos s ON a.servico_id = s.id
            WHERE a.id = $1 AND a.status = ANY($2::text[])`,
           agendamentoId,
-          STATUSES_PENDENTES,
+          STATUSES_EXCLUIDOS.map((s) => s.toLowerCase()),
         );
 
         if (!agRows || agRows.length === 0) {

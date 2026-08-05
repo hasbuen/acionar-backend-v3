@@ -34,7 +34,7 @@ export class EstoqueService {
   }
 
   async createProduto(tenantSlug: string, user: any, dto: any) {
-    const { nome, tipo, quantidade, estoque_minimo, custo_unitario, imagem_url } = dto;
+    const { nome, tipo, quantidade, estoque_minimo, custo_unitario, imagem_url, status_pagamento } = dto;
     if (!nome) throw new BadRequestException('Product name is required.');
 
     const qtd = parseInt(quantidade || 0, 10);
@@ -66,13 +66,15 @@ export class EstoqueService {
 
         if (custo > 0) {
           const totalCusto = qtd * custo;
+          const statusPag = status_pagamento || 'pago';
           await this.prisma.$queryRawUnsafe(
             `INSERT INTO fluxo_caixa (
               profissional_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento
-            ) VALUES ($1, 'saida', 'material', $2, $3, 'pago', 'dinheiro', CURRENT_DATE)`,
+            ) VALUES ($1, 'saida', 'material', $2, $3, $4, 'dinheiro', CURRENT_DATE)`,
             user.profissional_id,
             `Compra de Insumo: ${nome} (${qtd} un × R$ ${custo.toFixed(2)})`,
-            totalCusto
+            totalCusto,
+            statusPag
           );
         }
       }
@@ -82,7 +84,7 @@ export class EstoqueService {
   }
 
   async createMovimentacao(tenantSlug: string, user: any, dto: any) {
-    const { produto_id, tipo, quantidade, motivo } = dto;
+    const { produto_id, tipo, quantidade, motivo, status_pagamento } = dto;
     if (!produto_id || !tipo || !quantidade) {
       throw new BadRequestException('ID do Produto, Tipo e Quantidade são obrigatórios.');
     }
@@ -113,14 +115,16 @@ export class EstoqueService {
         // Só registra saída no caixa em entradas de reposição (compra de mais unidades)
         const total = qtyNum * custo;
         const desc = `Reposição de Estoque: ${produto.nome} (${qtyNum} un × R$ ${custo.toFixed(2)})`;
+        const statusPag = status_pagamento || 'pago';
 
         await this.prisma.$queryRawUnsafe(
           `INSERT INTO fluxo_caixa (
             profissional_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento
-          ) VALUES ($1, 'saida', 'material', $2, $3, 'pago', 'dinheiro', CURRENT_DATE)`,
+          ) VALUES ($1, 'saida', 'material', $2, $3, $4, 'dinheiro', CURRENT_DATE)`,
           user.profissional_id,
           desc,
-          total
+          total,
+          statusPag
         );
       }
 

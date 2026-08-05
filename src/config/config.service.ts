@@ -49,8 +49,21 @@ export class ConfigService {
   }
 
   async updatePublicScheduleConfig(tenantSlug: string, dto: any) {
-    const { agenda_publica_ativa, foto_url, cor_primaria, cor_destaque, cor_fundo, novo_slug } = dto;
+    const { agenda_publica_ativa, foto_url, cor_primaria, cor_destaque, cor_fundo, novo_slug, nome_empresa } = dto;
     let targetSlug = tenantSlug;
+
+    const currentTenant = await this.prisma.tenant.findUnique({ where: { slug: tenantSlug } });
+    if (!currentTenant) throw new NotFoundException('Tenant not found.');
+
+    const isAtiva = agenda_publica_ativa !== undefined ? Boolean(agenda_publica_ativa) : currentTenant.agenda_publica_ativa;
+
+    if (nome_empresa !== undefined && nome_empresa !== currentTenant.nome_empresa) {
+      if (!isAtiva) {
+        throw new ConflictException('Não é possível alterar o nome da empresa com a agenda pública desativada.');
+        
+        /*BadRequestException('Não é possível alterar o nome da empresa com a agenda pública desativada.');*/
+      }
+    }
 
     if (novo_slug && novo_slug !== tenantSlug) {
       const cleanSlug = novo_slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
@@ -65,6 +78,7 @@ export class ConfigService {
       where: { slug: tenantSlug },
       data: {
         slug: targetSlug,
+        nome_empresa: nome_empresa !== undefined && isAtiva ? String(nome_empresa).trim() : undefined,
         agenda_publica_ativa: agenda_publica_ativa !== undefined ? agenda_publica_ativa : undefined,
         foto_url: foto_url !== undefined ? foto_url : undefined,
         cor_primaria: cor_primaria || undefined,

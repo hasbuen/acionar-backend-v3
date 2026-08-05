@@ -189,6 +189,22 @@ export async function initTenantSchema(tenantSlug) {
       );
     `);
 
+    // 12. Push Subscriptions
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id SERIAL PRIMARY KEY,
+        endpoint TEXT UNIQUE NOT NULL,
+        p256dh TEXT,
+        auth TEXT,
+        profissional_id INT REFERENCES profissionais(id) ON DELETE CASCADE,
+        user_agent TEXT,
+        plataforma VARCHAR(50),
+        ativo BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        atualizado_em TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
     console.log(`[MIGRATION] Schema "${schemaName}" fully initialized.`);
   } finally {
     client.release();
