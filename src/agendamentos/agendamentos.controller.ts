@@ -22,6 +22,11 @@ export class AgendamentosController {
     return this.agendamentosService.update(req.user.tenant_slug, parseInt(id, 10), body);
   }
 
+  @Get(':id/payment')
+  async getPayment(@Req() req: any, @Param('id') id: string) {
+    return this.agendamentosService.getPaymentData(req.user.tenant_slug, parseInt(id, 10));
+  }
+
   @Delete(':id')
   async remove(@Req() req: any, @Param('id') id: string) {
     return this.agendamentosService.remove(req.user.tenant_slug, parseInt(id, 10));
