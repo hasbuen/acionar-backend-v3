@@ -151,7 +151,7 @@ router.get('/me', authMiddleware, async (req, res) => {
     );
 
     if (tenantRes.rows.length === 0 || profRes.rows.length === 0) {
-      return res.status(404).json({ error: 'User or tenant not found.' });
+      return res.status(404).json({ error: 'Dados inválidos, verifique!' });
     }
 
     res.json({
