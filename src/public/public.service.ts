@@ -153,5 +153,77 @@ export class PublicService {
       };
     });
   }
+
+  async handleAsaasWebhook(body: any) {
+    try {
+      const event = body?.event;
+      const payment = body?.payment || body;
+      const externalReference = payment?.externalReference;
+
+      console.log(`[ASAAS NEST WEBHOOK] Received event ${event} for externalReference ${externalReference}`);
+
+      if (!event || !externalReference) {
+        return { ok: true, message: 'Missing event or externalReference, ignored.' };
+      }
+
+      if (['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED', 'CHECKOUT_PAID', 'PIX_CREDIT_RECEIVED'].includes(event)) {
+        if (externalReference.includes('_')) {
+          const parts = externalReference.split('_');
+          const tenantSlug = parts[0].toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+          const appointmentId = parseInt(parts[1], 10);
+
+          if (!isNaN(appointmentId)) {
+            await this.prisma.ensureTenantSchema(tenantSlug);
+            await this.prisma.runInTenantSchema(tenantSlug, async () => {
+              const agQuery: any = await this.prisma.$queryRawUnsafe(
+                `SELECT a.id, a.valor_total, a.data_hora, a.profissional_id,
+                        c.nome as cliente_nome, s.nome as servico_nome
+                 FROM agendamentos a
+                 LEFT JOIN clientes c ON a.cliente_id = c.id
+                 LEFT JOIN servicos s ON a.servico_id = s.id
+                 WHERE a.id = $1`,
+                appointmentId
+              );
+
+              if (agQuery && agQuery.length > 0) {
+                const ag = agQuery[0];
+                const checkFc: any = await this.prisma.$queryRawUnsafe('SELECT id FROM fluxo_caixa WHERE agendamento_id = $1', appointmentId);
+
+                const billingType = payment.billingType || 'PIX';
+                const formaPagamento = String(billingType).toUpperCase() === 'PIX' ? 'pix' : 'cartao_credito';
+                const descricao = `Atendimento — ${ag.cliente_nome || 'Cliente'} / ${ag.servico_nome || 'Serviço'}`;
+                const dataMovimento = new Date(ag.data_hora).toISOString().split('T')[0];
+
+                if (!checkFc || checkFc.length === 0) {
+                  await this.prisma.$queryRawUnsafe(
+                    `INSERT INTO fluxo_caixa (agendamento_id, profissional_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento)
+                     VALUES ($1, $2, 'entrada', 'agendamento', $3, $4, 'pago', $5, $6::date)`,
+                    appointmentId, ag.profissional_id, descricao, ag.valor_total ?? 0, formaPagamento, dataMovimento
+                  );
+                  console.log(`[ASAAS NEST WEBHOOK] Created cashflow entry for tenant ${tenantSlug}, appointment ${appointmentId}`);
+                } else {
+                  await this.prisma.$queryRawUnsafe(
+                    `UPDATE fluxo_caixa SET status = 'pago', forma_pagamento = $1, valor = $2 WHERE agendamento_id = $3`,
+                    formaPagamento, ag.valor_total ?? 0, appointmentId
+                  );
+                  console.log(`[ASAAS NEST WEBHOOK] Updated cashflow entry to paid for tenant ${tenantSlug}, appointment ${appointmentId}`);
+                }
+
+                await this.prisma.$queryRawUnsafe(
+                  `UPDATE agendamentos SET status = 'confirmado' WHERE id = $1 AND status = 'aguardando_confirmacao'`,
+                  appointmentId
+                );
+              }
+            });
+          }
+        }
+      }
+
+      return { ok: true };
+    } catch (err) {
+      console.error('[ASAAS NEST WEBHOOK ERROR]', err);
+      return { ok: false, error: err.message };
+    }
+  }
 }
 

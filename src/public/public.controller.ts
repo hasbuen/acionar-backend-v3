@@ -24,4 +24,9 @@ export class PublicController {
   async createPublicAppointment(@Param('slug') slug: string, @Body() body: any) {
     return this.publicService.createPublicAppointment(slug, body);
   }
+
+  @Post('asaas-webhook')
+  async handleAsaasWebhook(@Body() body: any) {
+    return this.publicService.handleAsaasWebhook(body);
+  }
 }

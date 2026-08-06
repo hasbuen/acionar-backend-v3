@@ -311,81 +311,168 @@ export class AgendamentosService {
       const config = confRes[0]?.valor || confRes[0] || {};
       
       const agendRes: any = await this.prisma.$queryRawUnsafe(
-        'SELECT a.*, c.nome as cliente_nome, c.whatsapp as cliente_whatsapp FROM agendamentos a LEFT JOIN clientes c ON a.cliente_id = c.id WHERE a.id = $1',
+        'SELECT a.*, c.nome as cliente_nome, c.email as cliente_email, c.whatsapp as cliente_whatsapp, s.nome as servico_nome FROM agendamentos a LEFT JOIN clientes c ON a.cliente_id = c.id LEFT JOIN servicos s ON a.servico_id = s.id WHERE a.id = $1',
         id
       );
       if (!agendRes || agendRes.length === 0) throw new NotFoundException('Appointment not found.');
       const agendamento = agendRes[0];
       
-      const valorFinal = Number(agendamento.valor_total || 0).toFixed(2);
-      const clienteNomeOriginal = agendamento.cliente_nome || 'Cliente';
-      const clienteNome = clienteNomeOriginal.substring(0, 15).replace(/[^a-zA-Z0-9 ]/g, '');
-      const clientePhone = agendamento.cliente_whatsapp || '';
+      const valorFinal = Number(agendamento.valor_total || 0);
+      const valorFinalStr = valorFinal.toFixed(2);
       
       let pixKey = '';
       let paymentLink = '';
       
       const asaasEnabled = Boolean(config.asaas_enabled);
-      const asaasApiKey = process.env.ASAAS_API_KEY;
-      const asaasUrl = process.env.ASAAS_URL || 'https://sandbox.asaas.com/api/v3';
+      const asaasApiKey = config.asaas_api_key;
+      const asaasUrl = config.asaas_environment === 'production' ? 'https://www.asaas.com/api/v3' : 'https://sandbox.asaas.com/api/v3';
 
-      if (asaasEnabled && asaasApiKey && asaasApiKey !== 'SUA_CHAVE_ASAAS_AQUI') {
+      if (asaasEnabled && asaasApiKey) {
         try {
-          // 1. Criar cliente no Asaas
-          const customerRes = await fetch(`${asaasUrl}/customers`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'access_token': asaasApiKey },
-            body: JSON.stringify({ name: clienteNomeOriginal, mobilePhone: clientePhone })
+          // 1. Criar ou obter cliente
+          const cleanPhone = String(agendamento.cliente_whatsapp || '').replace(/\D/g, '');
+          const cpfCnpj = cleanPhone.length === 11 ? cleanPhone : '99999999999';
+
+          const searchRes = await fetch(`${asaasUrl}/customers?cpfCnpj=${cpfCnpj}`, {
+            method: 'GET',
+            headers: { 'access_token': asaasApiKey }
           });
-          const customerData = await customerRes.json();
-          const customerId = customerData.id;
+          const searchData = await searchRes.json().catch(() => ({}));
+          let customerId = searchData?.data?.[0]?.id;
 
           if (!customerId) {
-            console.error('Asaas Customer Error:', customerData);
-            throw new Error('Falha ao criar cliente no Asaas');
+            const customerRes = await fetch(`${asaasUrl}/customers`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'access_token': asaasApiKey },
+              body: JSON.stringify({
+                name: agendamento.cliente_nome || 'Cliente Acionar',
+                email: agendamento.cliente_email || undefined,
+                phone: agendamento.cliente_whatsapp || undefined,
+                notificationDisabled: true
+              })
+            });
+            const customerData = await customerRes.json().catch(() => ({}));
+            customerId = customerData.id;
           }
 
-          // 2. Criar cobrança Pix
-          const paymentRes = await fetch(`${asaasUrl}/payments`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'access_token': asaasApiKey },
-            body: JSON.stringify({
-              customer: customerId,
-              billingType: 'PIX',
-              value: Number(valorFinal),
-              dueDate: new Date(Date.now() + 86400000).toISOString().split('T')[0], // amanhã
-              description: `Agendamento #${agendamento.id} - ${tenantSlug}`,
-              externalReference: `${tenantSlug}_${agendamento.id}`
-            })
-          });
-          const paymentData = await paymentRes.json();
-          const paymentId = paymentData.id;
-          paymentLink = paymentData.invoiceUrl;
+          if (customerId) {
+            const chargeValue = Math.max(5.00, valorFinal);
+            const externalReference = `${tenantSlug}_${agendamento.id}`;
+            const description = `Agendamento #${agendamento.id} - ${agendamento.servico_nome || 'Atendimento'}`;
+            
+            const today = new Date();
+            today.setDate(today.getDate() + 3);
+            const dueDate = today.toISOString().split('T')[0];
 
-          if (paymentId) {
-            // 3. Obter payload do Pix
-            const qrCodeRes = await fetch(`${asaasUrl}/payments/${paymentId}/pixQrCode`, {
-              method: 'GET',
-              headers: { 'access_token': asaasApiKey }
+            // 2. Criar cobrança Pix
+            const paymentRes = await fetch(`${asaasUrl}/payments`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'access_token': asaasApiKey },
+              body: JSON.stringify({
+                customer: customerId,
+                billingType: 'PIX',
+                value: chargeValue,
+                dueDate,
+                description,
+                externalReference
+              })
             });
-            const qrCodeData = await qrCodeRes.json();
-            pixKey = qrCodeData.payload;
+            const paymentData = await paymentRes.json().catch(() => ({}));
+            const paymentId = paymentData.id;
+            paymentLink = paymentData.invoiceUrl || paymentData.bankSlipUrl || '';
+
+            if (paymentId) {
+              // 3. Obter payload do Pix
+              const qrCodeRes = await fetch(`${asaasUrl}/payments/${paymentId}/pixQrCode`, {
+                method: 'GET',
+                headers: { 'access_token': asaasApiKey }
+              });
+              const qrCodeData = await qrCodeRes.json().catch(() => ({}));
+              pixKey = qrCodeData.payload || '';
+            }
           }
         } catch (error) {
-          console.error('Erro na integração Asaas:', error);
-          // Falha silenciosa: cai no fallback
+          console.error('Erro na integração Asaas (NestJS service):', error);
         }
       }
       
       if (!pixKey) {
-        // Fallback manual usando a chave Pix do Tenant
-        const chavePix = config.pix_key || 'acionar';
-        const identificador = agendamento.id;
-        pixKey = `00020126580014BR.GOV.BCB.PIX0136${chavePix}5204000053039865405${valorFinal}5802BR5915${clienteNome}6009SAO PAULO62070503***6304E2CA`;
-        paymentLink = `https://acionar.app/pay/${identificador}?v=${valorFinal}`;
+        // Fallback manual usando a chave Pix do Tenant com geração dinâmica real
+        const pixKeyConfig = config.pix_key || '';
+        if (pixKeyConfig) {
+          pixKey = generatePixEmvPayload({
+            chavePix: pixKeyConfig,
+            nome: tenantSlug.toUpperCase(),
+            valor: valorFinal,
+            txid: String(agendamento.id)
+          }) || '';
+        }
+        paymentLink = ''; // Pix estático não tem link de checkout
       }
       
-      return { pixKey, paymentLink, valorFinal };
+      return { pixKey, paymentLink, valorFinal: valorFinalStr };
     });
   }
+}
+
+// Helpers para geração do Pix EMV
+function crc16Ccitt(str: string): string {
+  let crc = 0xFFFF;
+  for (let i = 0; i < str.length; i++) {
+    crc ^= str.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      if ((crc & 0x8000) !== 0) {
+        crc = (crc << 1) ^ 0x1021;
+      } else {
+        crc = crc << 1;
+      }
+      crc &= 0xFFFF;
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+function generatePixEmvPayload({ chavePix, nome = 'ACIONAR', cidade = 'SAO PAULO', valor = 0, txid = '***' }: { chavePix: string, nome?: string, cidade?: string, valor?: number, txid?: string }): string | null {
+  let cleanChave = String(chavePix || '').trim();
+  if (!cleanChave) return null;
+
+  const digitsOnly = cleanChave.replace(/\D/g, '');
+  if (digitsOnly.length === 11 && !cleanChave.startsWith('+') && !cleanChave.includes('@')) {
+    cleanChave = `+55${digitsOnly}`;
+  }
+
+  const cleanNome = String(nome || 'ACIONAR')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .slice(0, 25);
+  
+  const cleanCidade = String(cidade || 'SAO PAULO')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .slice(0, 15);
+  
+  const cleanValor = Number(valor || 0).toFixed(2);
+  const cleanTxid = String(txid || '***').replace(/[^a-zA-Z0-9]/g, '').slice(0, 25) || '***';
+
+  const gui = '0014BR.GOV.BCB.PIX';
+  const keyTag = `01${String(cleanChave.length).padStart(2, '0')}${cleanChave}`;
+  const merchantAccount = `${gui}${keyTag}`;
+
+  const txidTag = `05${String(cleanTxid.length).padStart(2, '0')}${cleanTxid}`;
+
+  let payload = '000201';
+  payload += `26${String(merchantAccount.length).padStart(2, '0')}${merchantAccount}`;
+  payload += '52040000';
+  payload += '5303986';
+  payload += `54${String(cleanValor.length).padStart(2, '0')}${cleanValor}`;
+  payload += '5802BR';
+  payload += `59${String(cleanNome.length).padStart(2, '0')}${cleanNome}`;
+  payload += `60${String(cleanCidade.length).padStart(2, '0')}${cleanCidade}`;
+  payload += `62${String(txidTag.length).padStart(2, '0')}${txidTag}`;
+  payload += '6304';
+
+  const crc = crc16Ccitt(payload);
+  return payload + crc;
 }

@@ -197,4 +197,90 @@ router.post('/tenant/:slug/agendamentos', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/public/asaas-webhook
+ * Public webhook to receive payment status updates from Asaas
+ */
+router.post('/asaas-webhook', async (req, res) => {
+  try {
+    const body = req.body;
+    const event = body?.event;
+    const payment = body?.payment || body;
+    const externalReference = payment?.externalReference;
+
+    console.log(`[ASAAS WEBHOOK] Received event ${event} for externalReference ${externalReference}`);
+
+    if (!event || !externalReference) {
+      return res.status(200).json({ ok: true, message: 'Missing event or externalReference, ignored.' });
+    }
+
+    // Process only payment received or confirmed events
+    if (['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED', 'CHECKOUT_PAID', 'PIX_CREDIT_RECEIVED'].includes(event)) {
+      if (externalReference.includes('_')) {
+        const parts = externalReference.split('_');
+        const tenantSlug = parts[0].toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+        const appointmentId = parseInt(parts[1], 10);
+
+        if (!isNaN(appointmentId)) {
+          // Fetch appointment details in the tenant's schema
+          const agQuery = await queryTenant(
+            tenantSlug,
+            `SELECT a.id, a.valor_total, a.data_hora, a.profissional_id,
+                    c.nome as cliente_nome, s.nome as servico_nome
+             FROM agendamentos a
+             LEFT JOIN clientes c ON a.cliente_id = c.id
+             LEFT JOIN servicos s ON a.servico_id = s.id
+             WHERE a.id = $1`,
+            [appointmentId]
+          );
+
+          if (agQuery.rows.length > 0) {
+            const ag = agQuery.rows[0];
+            const checkFc = await queryTenant(tenantSlug, 'SELECT id FROM fluxo_caixa WHERE agendamento_id = $1', [appointmentId]);
+
+            const billingType = payment.billingType || 'PIX';
+            const formaPagamento = String(billingType).toUpperCase() === 'PIX' ? 'pix' : 'cartao_credito';
+            const descricao = `Atendimento — ${ag.cliente_nome || 'Cliente'} / ${ag.servico_nome || 'Serviço'}`;
+            const dataMovimento = new Date(ag.data_hora).toISOString().split('T')[0];
+
+            if (checkFc.rows.length === 0) {
+              // Insert into cashflow
+              await queryTenant(
+                tenantSlug,
+                `INSERT INTO fluxo_caixa (agendamento_id, profissional_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento)
+                 VALUES ($1, $2, 'entrada', 'agendamento', $3, $4, 'pago', $5, $6::date)`,
+                [appointmentId, ag.profissional_id, descricao, ag.valor_total ?? 0, formaPagamento, dataMovimento]
+              );
+              console.log(`[ASAAS WEBHOOK] Created cashflow entry for tenant ${tenantSlug}, appointment ${appointmentId}`);
+            } else {
+              // Update existing cashflow
+              await queryTenant(
+                tenantSlug,
+                `UPDATE fluxo_caixa SET status = 'pago', forma_pagamento = $1, valor = $2 WHERE agendamento_id = $3`,
+                [formaPagamento, ag.valor_total ?? 0, appointmentId]
+              );
+              console.log(`[ASAAS WEBHOOK] Updated cashflow entry to paid for tenant ${tenantSlug}, appointment ${appointmentId}`);
+            }
+
+            // Update appointment status if pending confirmation
+            await queryTenant(
+              tenantSlug,
+              `UPDATE agendamentos SET status = 'confirmado' WHERE id = $1 AND status = 'aguardando_confirmacao'`,
+              [appointmentId]
+            );
+          } else {
+            console.warn(`[ASAAS WEBHOOK] Appointment ${appointmentId} not found in schema tenant_${tenantSlug}`);
+          }
+        }
+      }
+    }
+
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[ASAAS WEBHOOK ERROR]', err);
+    // Send 200 to Asaas to prevent loop re-tries on server error, but log it
+    res.status(200).json({ ok: false, error: err.message });
+  }
+});
+
 export default router;

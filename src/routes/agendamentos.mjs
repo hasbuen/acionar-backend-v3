@@ -1,6 +1,13 @@
 import express from 'express';
 import { queryTenant } from '../db/postgres.mjs';
 import { authMiddleware } from '../middleware/auth.mjs';
+import {
+  generatePixEmvPayload,
+  getOrCreateAsaasCustomer,
+  createAsaasPayment,
+  getAsaasPixQrCode
+} from '../services/payments.mjs';
+import { sendPushNotification } from '../services/push.mjs';
 
 const router = express.Router();
 
@@ -94,7 +101,44 @@ router.post('/', async (req, res) => {
       ]
     );
 
-    res.status(201).json({ agendamento: result.rows[0] });
+    const agendamento = result.rows[0];
+
+    // Trigger push notification asynchronously so it doesn't block the API response
+    (async () => {
+      try {
+        const servRes = await queryTenant(tenant_slug, 'SELECT nome FROM servicos WHERE id = $1', [servico_id]);
+        const serviceName = servRes.rows[0]?.nome || 'Serviço';
+        
+        const clientRes = await queryTenant(tenant_slug, 'SELECT nome FROM clientes WHERE id = $1', [cliente_id]);
+        const clienteNome = clientRes.rows[0]?.nome || 'Cliente';
+
+        const dateFormatted = new Date(data_hora).toLocaleDateString('pt-BR');
+        const timeFormatted = new Date(data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const localLabel = tipo_atendimento === 'cliente' || tipo_atendimento === 'externo' ? 'No local do cliente' : 'No salão';
+
+        await sendPushNotification(tenant_slug, {
+          title: `Novo agendamento: ${clienteNome}`,
+          body: `Serviço: ${serviceName}\nData: ${dateFormatted} às ${timeFormatted}\nLocal: ${localLabel}`,
+          url: '/agenda',
+          agendamento_id: agendamento.id,
+          tag: `new-agendamento-${agendamento.id}`,
+          data: {
+            url: '/agenda',
+            agendamento_id: agendamento.id,
+            clienteNome,
+            servicoNome: serviceName,
+            data: dateFormatted,
+            hora: timeFormatted,
+            local: localLabel,
+            kind: 'new'
+          }
+        });
+      } catch (pushErr) {
+        console.error('[POST AGENDAMENTO PUSH ERROR]', pushErr);
+      }
+    })();
+
+    res.status(201).json({ agendamento });
   } catch (err) {
     console.error('[POST AGENDAMENTO ERROR]', err);
     res.status(500).json({ error: 'Failed to create appointment.' });
@@ -163,6 +207,107 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     console.error('[DELETE AGENDAMENTO ERROR]', err);
     res.status(500).json({ error: 'Failed to delete appointment.' });
+  }
+});
+
+/**
+ * GET /api/agendamentos/:id/payment
+ * Generates online billing details (Asaas/Pix) or Fallback Static Pix
+ */
+router.get('/:id/payment', async (req, res) => {
+  try {
+    const { tenant_slug } = req.user;
+    const { id } = req.params;
+
+    // 1. Fetch appointment details with client and service names
+    const agQuery = `
+      SELECT a.*,
+             c.nome as cliente_nome, c.email as cliente_email, c.whatsapp as cliente_whatsapp,
+             s.nome as servico_nome
+      FROM agendamentos a
+      LEFT JOIN clientes c ON a.cliente_id = c.id
+      LEFT JOIN servicos s ON a.servico_id = s.id
+      WHERE a.id = $1
+    `;
+    const agRes = await queryTenant(tenant_slug, agQuery, [id]);
+    if (agRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    }
+    const appointment = agRes.rows[0];
+
+    // 2. Fetch tenant payment settings
+    const configRes = await queryTenant(tenant_slug, 'SELECT valor FROM configuracoes WHERE chave = $1', ['pagamentos']);
+    const settings = configRes.rows[0]?.valor || { asaas_enabled: false, pix_key: '', pix_key_type: 'aleatoria' };
+
+    const valorFinal = Number(appointment.valor_total || 0);
+
+    // 3. Try Asaas Billing if enabled
+    if (settings.asaas_enabled && settings.asaas_api_key) {
+      try {
+        const customerData = {
+          name: appointment.cliente_nome || 'Cliente Acionar',
+          email: appointment.cliente_email || undefined,
+          phone: appointment.cliente_whatsapp || ''
+        };
+
+        // Create/retrieve customer on Asaas
+        const customer = await getOrCreateAsaasCustomer(customerData, settings);
+
+        if (customer && customer.id) {
+          // Asaas requires minimum value of R$ 5,00 for charge creation
+          const chargeValue = Math.max(5.00, valorFinal);
+
+          // Unique external reference format: slug_agendamentoId
+          const externalReference = `${tenant_slug}_${appointment.id}`;
+          const description = `Agendamento #${appointment.id} - ${appointment.servico_nome || 'Atendimento'}`;
+
+          const payment = await createAsaasPayment({
+            customerId: customer.id,
+            value: chargeValue,
+            description,
+            externalReference
+          }, settings);
+
+          if (payment && payment.id) {
+            const pixQrCode = await getAsaasPixQrCode(payment.id, settings);
+            if (pixQrCode && pixQrCode.payload) {
+              return res.json({
+                pixKey: pixQrCode.payload,
+                paymentLink: payment.invoiceUrl || payment.bankSlipUrl || null
+              });
+            }
+          }
+        }
+      } catch (asaasErr) {
+        console.warn(`[ASAAS BILLING FALLBACK] Failed to generate Asaas billing for appointment ${id}, falling back to static Pix:`, asaasErr.message || asaasErr);
+      }
+    }
+
+    // 4. Fallback: Static Pix EMV (Direct Pix)
+    const pixKeyConfig = settings.pix_key || '';
+    if (!pixKeyConfig) {
+      return res.status(422).json({ error: 'Nenhuma chave Pix configurada para este estabelecimento.' });
+    }
+
+    const emvPayload = generatePixEmvPayload({
+      chavePix: pixKeyConfig,
+      nome: tenant_slug.toUpperCase(),
+      valor: valorFinal,
+      txid: String(appointment.id)
+    });
+
+    if (!emvPayload) {
+      return res.status(422).json({ error: 'Erro ao gerar payload do Pix estático.' });
+    }
+
+    res.json({
+      pixKey: emvPayload,
+      paymentLink: null
+    });
+
+  } catch (err) {
+    console.error('[GET APPOINTMENT PAYMENT ERROR]', err);
+    res.status(500).json({ error: 'Falhou ao gerar cobrança de pagamento.' });
   }
 });
 
