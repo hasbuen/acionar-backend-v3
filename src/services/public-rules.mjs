@@ -159,6 +159,29 @@ export async function getAvailableTimeSlots(tenantSlug, dateStr, servicoId, isAt
         }
 
         if (!conflito) {
+          // Se a data solicitada for hoje, filtra horários no passado de acordo com o fuso de Brasília
+          const todayStr = new Intl.DateTimeFormat('pt-BR', {
+            timeZone: 'America/Sao_Paulo',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }).format(new Date()).split('/').reverse().join('-');
+
+          if (dateStr === todayStr) {
+            const formatter = new Intl.DateTimeFormat('pt-BR', {
+              timeZone: 'America/Sao_Paulo',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false
+            });
+            const [currH, currM] = formatter.format(new Date()).split(':').map(Number);
+            const currentMinutes = currH * 60 + currM;
+
+            if (min <= currentMinutes) {
+              continue; // Horário já passou
+            }
+          }
+
           // Adiciona o horário formatado (ex: "09:30") à lista única
           const h = String(Math.floor(min / 60)).padStart(2, '0');
           const m = String(min % 60).padStart(2, '0');

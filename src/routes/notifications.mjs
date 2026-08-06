@@ -77,4 +77,55 @@ router.post('/unsubscribe', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/notifications
+router.get('/', authMiddleware, async (req, res) => {
+  try {
+    const { tenant_slug, profissional_id } = req.user;
+    const result = await queryTenant(
+      tenant_slug,
+      'SELECT id, titulo, mensagem, lida, created_at FROM notificacoes WHERE profissional_id = $1 ORDER BY created_at DESC LIMIT 50',
+      [profissional_id]
+    );
+    res.json({ notifications: result.rows });
+  } catch (err) {
+    console.error('[GET NOTIFICATIONS ERROR]', err);
+    res.status(500).json({ error: 'Failed to fetch notifications.' });
+  }
+});
+
+// PUT /api/notifications/:id/read
+router.put('/:id/read', authMiddleware, async (req, res) => {
+  try {
+    const { tenant_slug, profissional_id } = req.user;
+    const { id } = req.params;
+
+    const result = await queryTenant(
+      tenant_slug,
+      'UPDATE notificacoes SET lida = true WHERE id = $1 AND profissional_id = $2 RETURNING *',
+      [id, profissional_id]
+    );
+
+    res.json({ notification: result.rows[0] });
+  } catch (err) {
+    console.error('[MARK READ ERROR]', err);
+    res.status(500).json({ error: 'Failed to mark notification as read.' });
+  }
+});
+
+// DELETE /api/notifications
+router.delete('/', authMiddleware, async (req, res) => {
+  try {
+    const { tenant_slug, profissional_id } = req.user;
+    await queryTenant(
+      tenant_slug,
+      'DELETE FROM notificacoes WHERE profissional_id = $1',
+      [profissional_id]
+    );
+    res.json({ message: 'Notifications cleared.' });
+  } catch (err) {
+    console.error('[CLEAR NOTIFICATIONS ERROR]', err);
+    res.status(500).json({ error: 'Failed to clear notifications.' });
+  }
+});
+
 export default router;

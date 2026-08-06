@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 
 
 @Injectable()
@@ -8,6 +9,7 @@ export class AgendamentosService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly notificationsGateway: NotificationsGateway,
   ) {}
 
   async findAll(tenantSlug: string, user: any, query: any) {
@@ -49,8 +51,27 @@ export class AgendamentosService {
 
       sql += ' ORDER BY a.data_hora ASC';
 
-      const agendamentos: any = await this.prisma.$queryRawUnsafe(sql, ...params);
-      return { agendamentos };
+      const resRows: any = await this.prisma.$queryRawUnsafe(sql, ...params);
+
+      const formattedAgendamentos = resRows.map(item => {
+        if (!item.cliente_id && item.observacao && item.observacao.startsWith('{"temp_cliente_nome"')) {
+          try {
+            const temp = JSON.parse(item.observacao);
+            return {
+              ...item,
+              cliente_nome: temp.temp_cliente_nome,
+              cliente_whatsapp: temp.temp_cliente_whatsapp,
+              cliente_email: temp.temp_cliente_email,
+              observacao: temp.observacao_cliente || ''
+            };
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+        return item;
+      });
+
+      return { agendamentos: formattedAgendamentos };
     });
   }
 
@@ -86,6 +107,17 @@ export class AgendamentosService {
         console.error('Failed to trigger appointment push notification:', err);
       }
 
+      // Trigger real-time websocket synchronization
+      try {
+        this.notificationsGateway.broadcastToTenant(tenantSlug, 'appointments-changed', {
+          action: 'create',
+          id: res[0].id,
+          status: res[0].status
+        });
+      } catch (socketErr) {
+        console.error('[SOCKET BROADCAST ERROR]', socketErr);
+      }
+
       return { agendamento: res[0] };
     });
   }
@@ -104,6 +136,18 @@ export class AgendamentosService {
 
       const agendamento = agendRes[0];
 
+      // Verificação de concorrência: se o agendamento já foi aceito por outro profissional
+      if (
+        (status === 'agendado' || status === 'confirmado') && 
+        (agendamento.status === 'agendado' || agendamento.status === 'confirmado') &&
+        agendamento.profissional_id &&
+        agendamento.profissional_id !== user?.profissional_id
+      ) {
+        const profRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM profissionais WHERE id = $1', agendamento.profissional_id);
+        const profNome = profRes && profRes.length > 0 ? profRes[0].nome : 'outro usuário';
+        throw new ForbiddenException(`Atenção: Este agendamento já foi aceito pelo usuário ${profNome}. A tela será atualizada.`);
+      }
+
       let finalProfId = profissional_id || agendamento.profissional_id;
 
       // Se for aceite de solicitação pública sem profissional, atribui automaticamente ao profissional logado
@@ -114,7 +158,29 @@ export class AgendamentosService {
       }
 
       let finalClienteId = agendamento.cliente_id;
-      const targetProfId = finalProfId;
+      let finalObservacao = observacao;
+      const targetProfId = finalProfId || user?.profissional_id;
+
+      // Se for aceite de solicitação pública com cliente pendente em JSON, cadastra formalmente
+      if ((status === 'agendado' || status === 'confirmado') && !agendamento.cliente_id && agendamento.observacao && agendamento.observacao.startsWith('{"temp_cliente_nome"')) {
+        try {
+          const temp = JSON.parse(agendamento.observacao);
+          
+          const clientInsert: any = await this.prisma.$queryRawUnsafe(
+            `INSERT INTO clientes (profissional_id, nome, whatsapp, email)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (whatsapp) 
+             DO UPDATE SET nome = EXCLUDED.nome, email = COALESCE(EXCLUDED.email, clientes.email), profissional_id = COALESCE(clientes.profissional_id, EXCLUDED.profissional_id)
+             RETURNING id`,
+            targetProfId, temp.temp_cliente_nome, temp.temp_cliente_whatsapp, temp.temp_cliente_email
+          );
+
+          finalClienteId = clientInsert[0].id;
+          finalObservacao = temp.observacao_cliente || '';
+        } catch (e) {
+          console.error('[NESTJS FORMAL CLIENT CREATION ERROR]', e);
+        }
+      }
 
       if (agendamento.cliente_id && targetProfId) {
         const clientRows: any = await this.prisma.$queryRawUnsafe(
@@ -160,7 +226,7 @@ export class AgendamentosService {
         status !== undefined ? status : null,
         data_hora !== undefined && data_hora !== '' ? data_hora : null,
         valor_total !== undefined ? valor_total : null,
-        observacao !== undefined ? observacao : null,
+        finalObservacao !== undefined ? finalObservacao : null,
         finalProfId !== undefined ? finalProfId : null,
         finalClienteId,
         id,
@@ -172,7 +238,58 @@ export class AgendamentosService {
         await this.consumirProdutosAgendamento(tenantSlug, agendamento, profissional_id || agendamento.profissional_id);
       }
 
-      return { agendamento: res[0] };
+      // Criar notificações em-app para outros profissionais no caso de aceite de solicitação
+      const updatedAg = res[0];
+      const wasPending = agendamento && ['aguardando_confirmacao', 'solicitado', 'pendente'].includes(agendamento.status);
+      const isAccepted = ['agendado', 'confirmado'].includes(updatedAg.status);
+
+      if (wasPending && isAccepted) {
+        try {
+          let clientName = 'Cliente';
+          if (updatedAg.cliente_id) {
+            const clRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM clientes WHERE id = $1', updatedAg.cliente_id);
+            if (clRes && clRes.length > 0) clientName = clRes[0].nome;
+          } else if (agendamento.observacao && agendamento.observacao.startsWith('{"temp_cliente_nome"')) {
+            const temp = JSON.parse(agendamento.observacao);
+            clientName = temp.temp_cliente_nome;
+          }
+
+          const profName = user?.nome || 'Profissional';
+          const msgText = `${profName} aceitou o agendamento de ${clientName}.`;
+
+          // Notificar todos os outros profissionais ativos
+          const others: any = await this.prisma.$queryRawUnsafe('SELECT id FROM profissionais WHERE ativo = true AND id <> $1', user?.profissional_id || 0);
+          for (const p of others) {
+            await this.prisma.$queryRawUnsafe(
+              `INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida)
+               VALUES ($1, 'Solicitação Aceita', $2, false)`,
+              p.id,
+              msgText
+            );
+          }
+        } catch (e) {
+          console.error('[NESTJS DATABASE NOTIFICATION ERROR ON UPDATE]', e);
+        }
+      }
+
+      // Trigger real-time websocket synchronization
+      try {
+        this.notificationsGateway.broadcastToTenant(tenantSlug, 'appointments-changed', {
+          action: 'update',
+          id: updatedAg.id,
+          status: updatedAg.status
+        });
+        if (wasPending && isAccepted) {
+          this.notificationsGateway.broadcastToTenant(tenantSlug, 'notifications-changed', {
+            action: 'update',
+            type: 'appointment_confirmed'
+          });
+        }
+      } catch (socketErr) {
+        console.error('[SOCKET BROADCAST ERROR]', socketErr);
+      }
+
+      return { agendamento: updatedAg };
     });
   }
 
@@ -307,6 +424,16 @@ export class AgendamentosService {
 
       // 3. Exclui o agendamento
       await this.prisma.$queryRawUnsafe('DELETE FROM agendamentos WHERE id = $1', id);
+
+      // Trigger real-time websocket synchronization
+      try {
+        this.notificationsGateway.broadcastToTenant(tenantSlug, 'appointments-changed', {
+          action: 'delete',
+          id
+        });
+      } catch (socketErr) {
+        console.error('[SOCKET BROADCAST ERROR]', socketErr);
+      }
 
       return { message: 'Agendamento deletado e estornos realizados com sucesso.' };
     });

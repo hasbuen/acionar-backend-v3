@@ -205,6 +205,18 @@ export async function initTenantSchema(tenantSlug) {
       );
     `);
 
+    // 13. Notificacoes
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS notificacoes (
+        id SERIAL PRIMARY KEY,
+        profissional_id INT REFERENCES profissionais(id) ON DELETE CASCADE,
+        titulo VARCHAR(150) NOT NULL,
+        mensagem TEXT NOT NULL,
+        lida BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `);
+
     console.log(`[MIGRATION] Schema "${schemaName}" fully initialized.`);
   } finally {
     client.release();

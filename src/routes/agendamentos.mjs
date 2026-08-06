@@ -63,7 +63,26 @@ router.get('/', async (req, res) => {
     sql += ' ORDER BY a.data_hora ASC';
 
     const result = await queryTenant(tenant_slug, sql, params);
-    res.json({ agendamentos: result.rows });
+
+    const formattedAgendamentos = result.rows.map(item => {
+      if (!item.cliente_id && item.observacao && item.observacao.startsWith('{"temp_cliente_nome"')) {
+        try {
+          const temp = JSON.parse(item.observacao);
+          return {
+            ...item,
+            cliente_nome: temp.temp_cliente_nome,
+            cliente_whatsapp: temp.temp_cliente_whatsapp,
+            cliente_email: temp.temp_cliente_email,
+            observacao: temp.observacao_cliente || ''
+          };
+        } catch (e) {
+          // Ignore parse errors
+        }
+      }
+      return item;
+    });
+
+    res.json({ agendamentos: formattedAgendamentos });
   } catch (err) {
     console.error('[GET AGENDAMENTOS ERROR]', err);
     res.status(500).json({ error: 'Failed to fetch appointments.' });
@@ -168,14 +187,38 @@ router.put('/:id', async (req, res) => {
     const { status, data_hora, valor_total, observacao, profissional_id } = req.body;
 
     let finalProfId = profissional_id;
+    let finalClienteId = null;
+    let finalObservacao = observacao;
 
-    // Se for aceite de solicitação pública sem profissional, atribui automaticamente ao profissional logado
-    if ((status === 'agendado' || status === 'confirmado') && !finalProfId) {
-      const checkRes = await queryTenant(tenant_slug, 'SELECT profissional_id, status FROM agendamentos WHERE id = $1', [id]);
-      if (checkRes.rows.length > 0) {
-        const ag = checkRes.rows[0];
+    const checkRes = await queryTenant(tenant_slug, 'SELECT * FROM agendamentos WHERE id = $1', [id]);
+    if (checkRes.rows.length > 0) {
+      const ag = checkRes.rows[0];
+
+      if ((status === 'agendado' || status === 'confirmado') && !finalProfId) {
         if (!ag.profissional_id && ['aguardando_confirmacao', 'solicitado', 'pendente'].includes(ag.status)) {
           finalProfId = req.user.profissional_id;
+        }
+      }
+
+      if ((status === 'agendado' || status === 'confirmado') && !ag.cliente_id && ag.observacao && ag.observacao.startsWith('{"temp_cliente_nome"')) {
+        try {
+          const temp = JSON.parse(ag.observacao);
+          const targetProfId = finalProfId || ag.profissional_id || req.user.profissional_id;
+
+          const clientInsert = await queryTenant(
+            tenant_slug,
+            `INSERT INTO clientes (nome, whatsapp, email)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (whatsapp) 
+             DO UPDATE SET nome = EXCLUDED.nome, email = COALESCE(EXCLUDED.email, clientes.email)
+             RETURNING id`,
+            [temp.temp_cliente_nome, temp.temp_cliente_whatsapp, temp.temp_cliente_email]
+          );
+
+          finalClienteId = clientInsert.rows[0].id;
+          finalObservacao = temp.observacao_cliente || '';
+        } catch (e) {
+          console.error('[FORMAL CLIENT CREATION ERROR]', e);
         }
       }
     }
@@ -187,16 +230,49 @@ router.put('/:id', async (req, res) => {
            data_hora = COALESCE($2, data_hora),
            valor_total = COALESCE($3, valor_total),
            observacao = COALESCE($4, observacao),
-           profissional_id = COALESCE($5, profissional_id)
-       WHERE id = $6 RETURNING *`,
-      [status, data_hora, valor_total, observacao, finalProfId, id]
+           profissional_id = COALESCE($5, profissional_id),
+           cliente_id = COALESCE($6, cliente_id)
+       WHERE id = $7 RETURNING *`,
+      [status, data_hora, valor_total, finalObservacao !== undefined ? finalObservacao : null, finalProfId, finalClienteId, id]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Appointment not found.' });
     }
 
-    res.json({ agendamento: result.rows[0] });
+    // Criar notificações em-app para outros profissionais no caso de aceite de solicitação
+    const updatedAg = result.rows[0];
+    const wasPending = checkRes.rows.length > 0 && ['aguardando_confirmacao', 'solicitado', 'pendente'].includes(checkRes.rows[0].status);
+    const isAccepted = ['agendado', 'confirmado'].includes(updatedAg.status);
+
+    if (wasPending && isAccepted) {
+      try {
+        let clientName = 'Cliente';
+        if (updatedAg.cliente_id) {
+          const clRes = await queryTenant(tenant_slug, 'SELECT nome FROM clientes WHERE id = $1', [updatedAg.cliente_id]);
+          if (clRes.rows.length > 0) clientName = clRes.rows[0].nome;
+        } else if (checkRes.rows[0].observacao && checkRes.rows[0].observacao.startsWith('{"temp_cliente_nome"')) {
+          const temp = JSON.parse(checkRes.rows[0].observacao);
+          clientName = temp.temp_cliente_nome;
+        }
+
+        const profName = req.user.nome || 'Profissional';
+        const msgText = `${profName} aceitou o agendamento de ${clientName}.`;
+
+        // Notificar todos os outros profissionais ativos
+        const others = await queryTenant(tenant_slug, 'SELECT id FROM profissionais WHERE ativo = true AND id <> $1', [req.user.profissional_id]);
+        for (const p of others.rows) {
+          await queryTenant(tenant_slug, `
+            INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida)
+            VALUES ($1, 'Solicitação Aceita', $2, false)
+          `, [p.id, msgText]);
+        }
+      } catch (e) {
+        console.error('[DATABASE NOTIFICATION ERROR ON UPDATE]', e);
+      }
+    }
+
+    res.json({ agendamento: updatedAg });
   } catch (err) {
     console.error('[PUT AGENDAMENTO ERROR]', err);
     res.status(500).json({ error: 'Failed to update appointment.' });

@@ -105,26 +105,7 @@ router.post('/tenant/:slug/agendamentos', async (req, res) => {
       return res.status(400).json({ error: 'Name, WhatsApp, Service, and Date/Time are required.' });
     }
 
-    // 1. Find or create customer
-    let clienteId;
-    const existingCliente = await queryTenant(
-      slug,
-      'SELECT id FROM clientes WHERE whatsapp = $1 OR (email IS NOT NULL AND email = $2) LIMIT 1',
-      [cliente_whatsapp, cliente_email || '']
-    );
-
-    if (existingCliente.rows.length > 0) {
-      clienteId = existingCliente.rows[0].id;
-    } else {
-      const newCliente = await queryTenant(
-        slug,
-        'INSERT INTO clientes (nome, whatsapp, email) VALUES ($1, $2, $3) RETURNING id',
-        [cliente_nome, cliente_whatsapp, cliente_email || null]
-      );
-      clienteId = newCliente.rows[0].id;
-    }
-
-    // 2. Fetch service duration & price
+    // 1. Fetch service duration & price
     const servRes = await queryTenant(slug, 'SELECT nome, preco, duracao_minutos FROM servicos WHERE id = $1', [servico_id]);
     if (servRes.rows.length === 0) {
       return res.status(404).json({ error: 'Selected service not found.' });
@@ -141,7 +122,15 @@ router.post('/tenant/:slug/agendamentos', async (req, res) => {
       }
     }
 
-    // 3. Create appointment
+    // Encapsulate temporary customer details in JSON within the observation column
+    const observationJson = JSON.stringify({
+      temp_cliente_nome: cliente_nome,
+      temp_cliente_whatsapp: cliente_whatsapp,
+      temp_cliente_email: cliente_email || null,
+      observacao_cliente: observacao || ''
+    });
+
+    // 2. Create appointment with NULL cliente_id
     const agendamentoRes = await queryTenant(
       slug,
       `INSERT INTO agendamentos (
@@ -150,24 +139,46 @@ router.post('/tenant/:slug/agendamentos', async (req, res) => {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'aguardando_confirmacao', $8, $9, $10)
       RETURNING *`,
       [
-        clienteId,
+        null, // Defer formal client creation
         profissional_id || null,
         servico_id,
         subservico_id || null,
         data_hora,
         duracaoTotal,
         valorTotal,
-        observacao || 'Agendado via Agenda Pública',
+        observationJson,
         tipo_atendimento || 'salao',
         endereco_externo || null
       ]
     );
 
-    // Trigger push notification to active subscribers
     const serviceName = servRes.rows[0]?.nome || 'Serviço';
     const dateFormatted = new Date(data_hora).toLocaleDateString('pt-BR');
     const timeFormatted = new Date(data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const localLabel = tipo_atendimento === 'cliente' || tipo_atendimento === 'externo' ? 'No local do cliente' : 'No salão';
+
+    // 3. Create active in-app notifications in database for apt professionals
+    try {
+      const profsAptos = await queryTenant(slug, `
+        SELECT p.id 
+        FROM profissionais p
+        JOIN profissional_servicos ps ON ps.profissional_id = p.id
+        WHERE p.ativo = true AND ps.servico_id = $1 AND ps.ativo = true
+      `, [servico_id]);
+
+      const msgText = `Nova solicitação: ${cliente_nome} agendou ${serviceName} para o dia ${dateFormatted} às ${timeFormatted}.`;
+
+      for (const p of profsAptos.rows) {
+        await queryTenant(slug, `
+          INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida)
+          VALUES ($1, 'Solicitação Pendente', $2, false)
+        `, [p.id, msgText]);
+      }
+    } catch (e) {
+      console.error('[DATABASE NOTIFICATION ERROR]', e);
+    }
+
+    // Trigger push notification to active subscribers
 
     sendPushNotification(slug, {
       title: `Novo agendamento: ${cliente_nome}`,

@@ -112,4 +112,38 @@ export class NotificationsService {
       }
     });
   }
+
+  async findAll(tenantSlug: string, user: any) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const notifications: any = await this.prisma.$queryRawUnsafe(
+        'SELECT id, titulo, mensagem, lida, created_at FROM notificacoes WHERE profissional_id = $1 ORDER BY created_at DESC LIMIT 50',
+        user.profissional_id,
+      );
+      return { notifications };
+    });
+  }
+
+  async markAsRead(tenantSlug: string, id: number, user: any) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const result: any = await this.prisma.$queryRawUnsafe(
+        'UPDATE notificacoes SET lida = true WHERE id = $1 AND profissional_id = $2 RETURNING *',
+        id,
+        user.profissional_id,
+      );
+      return { notification: result[0] };
+    });
+  }
+
+  async clearAll(tenantSlug: string, user: any) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      await this.prisma.$queryRawUnsafe(
+        'DELETE FROM notificacoes WHERE profissional_id = $1',
+        user.profissional_id,
+      );
+      return { message: 'Notifications cleared.' };
+    });
+  }
 }

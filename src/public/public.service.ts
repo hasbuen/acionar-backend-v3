@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 
 @Injectable()
 export class PublicService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly notificationsGateway: NotificationsGateway,
   ) {}
 
 
@@ -84,24 +86,7 @@ export class PublicService {
     }
 
     return this.prisma.runInTenantSchema(cleanSlug, async () => {
-      // 1. Find or create customer
-      const existing: any = await this.prisma.$queryRawUnsafe(
-        'SELECT id FROM clientes WHERE whatsapp = $1 OR (email IS NOT NULL AND email = $2) LIMIT 1',
-        cliente_whatsapp, cliente_email || ''
-      );
-
-      let clienteId: number;
-      if (existing && existing.length > 0) {
-        clienteId = existing[0].id;
-      } else {
-        const newC: any = await this.prisma.$queryRawUnsafe(
-          'INSERT INTO clientes (nome, whatsapp, email) VALUES ($1, $2, $3) RETURNING id',
-          cliente_nome, cliente_whatsapp, cliente_email || null
-        );
-        clienteId = newC[0].id;
-      }
-
-      // 2. Fetch service
+      // 1. Fetch service
       const servRes: any = await this.prisma.$queryRawUnsafe(
         'SELECT preco, duracao_minutos FROM servicos WHERE id = $1',
         servico_id
@@ -122,29 +107,80 @@ export class PublicService {
         }
       }
 
-      // 3. Create appointment with timestamptz cast
+      // Encapsulate temporary customer details in JSON within the observation column
+      const observationJson = JSON.stringify({
+        temp_cliente_nome: cliente_nome,
+        temp_cliente_whatsapp: cliente_whatsapp,
+        temp_cliente_email: cliente_email || null,
+        observacao_cliente: observacao || ''
+      });
+
+      // 2. Create appointment with NULL cliente_id
       const apptRes: any = await this.prisma.$queryRawUnsafe(
         `INSERT INTO agendamentos (
           cliente_id, profissional_id, servico_id, subservico_id, data_hora,
           duracao_total_minutos, valor_total, status, observacao, tipo_atendimento, endereco_externo
         ) VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, 'aguardando_confirmacao', $8, $9, $10)
         RETURNING *`,
-        clienteId,
+        null, // Defer formal client creation
         profissional_id || null,
         servico_id,
         subservico_id || null,
         data_hora,
         duracaoTotal,
         valorTotal,
-        observacao || 'Agendado via Agenda Pública',
+        observationJson,
         tipo_atendimento || 'salao',
         endereco_externo || null
       );
+
+      // 3. Create database notifications for apt professionals
+      try {
+        const profsAptos: any = await this.prisma.$queryRawUnsafe(
+          `SELECT p.id 
+           FROM profissionais p
+           JOIN profissional_servicos ps ON ps.profissional_id = p.id
+           WHERE p.ativo = true AND ps.servico_id = $1 AND ps.ativo = true`,
+          servico_id
+        );
+
+        const dateFormatted = new Date(data_hora).toLocaleDateString('pt-BR');
+        const timeFormatted = new Date(data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const servNameQuery: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM servicos WHERE id = $1', servico_id);
+        const serviceName = servNameQuery[0]?.nome || 'Serviço';
+        const msgText = `Nova solicitação: ${cliente_nome} agendou ${serviceName} para o dia ${dateFormatted} às ${timeFormatted}.`;
+
+        for (const p of profsAptos) {
+          await this.prisma.$queryRawUnsafe(
+            `INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida)
+             VALUES ($1, 'Solicitação Pendente', $2, false)`,
+            p.id,
+            msgText
+          );
+        }
+      } catch (e) {
+        console.error('[NESTJS DATABASE NOTIFICATION ERROR]', e);
+      }
 
       try {
         await this.notificationsService.sendAppointmentPush(cleanSlug, apptRes[0].id);
       } catch (err) {
         console.error('Failed to trigger public appointment push notification:', err);
+      }
+
+      // Trigger real-time websocket synchronization
+      try {
+        this.notificationsGateway.broadcastToTenant(cleanSlug, 'appointments-changed', {
+          action: 'create',
+          id: apptRes[0].id,
+          status: apptRes[0].status
+        });
+        this.notificationsGateway.broadcastToTenant(cleanSlug, 'notifications-changed', {
+          action: 'create',
+          type: 'appointment_requested'
+        });
+      } catch (socketErr) {
+        console.error('[SOCKET BROADCAST ERROR]', socketErr);
       }
 
       return {
