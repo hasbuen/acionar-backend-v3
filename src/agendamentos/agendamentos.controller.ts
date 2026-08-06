@@ -20,7 +20,7 @@ export class AgendamentosController {
 
   @Put(':id')
   async update(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.agendamentosService.update(req.user.tenant_slug, parseInt(id, 10), body);
+    return this.agendamentosService.update(req.user.tenant_slug, parseInt(id, 10), body, req.user);
   }
 
   @Get(':id/payment')

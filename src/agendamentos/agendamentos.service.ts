@@ -44,7 +44,7 @@ export class AgendamentosService {
       }
       if (profIdFilter) {
         params.push(profIdFilter);
-        sql += ` AND a.profissional_id = $${params.length}`;
+        sql += ` AND (a.profissional_id = $${params.length} OR (a.profissional_id IS NULL AND a.status = 'aguardando_confirmacao'))`;
       }
 
       sql += ' ORDER BY a.data_hora ASC';
@@ -90,7 +90,7 @@ export class AgendamentosService {
     });
   }
 
-  async update(tenantSlug: string, id: number, dto: any) {
+  async update(tenantSlug: string, id: number, dto: any, user?: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const { status, data_hora, valor_total, observacao, profissional_id } = dto;
@@ -104,8 +104,17 @@ export class AgendamentosService {
 
       const agendamento = agendRes[0];
 
+      let finalProfId = profissional_id || agendamento.profissional_id;
+
+      // Se for aceite de solicitação pública sem profissional, atribui automaticamente ao profissional logado
+      if ((status === 'agendado' || status === 'confirmado') && !profissional_id && !agendamento.profissional_id) {
+        if (user?.profissional_id) {
+          finalProfId = user.profissional_id;
+        }
+      }
+
       let finalClienteId = agendamento.cliente_id;
-      const targetProfId = profissional_id || agendamento.profissional_id;
+      const targetProfId = finalProfId;
 
       if (agendamento.cliente_id && targetProfId) {
         const clientRows: any = await this.prisma.$queryRawUnsafe(
@@ -152,7 +161,7 @@ export class AgendamentosService {
         data_hora !== undefined && data_hora !== '' ? data_hora : null,
         valor_total !== undefined ? valor_total : null,
         observacao !== undefined ? observacao : null,
-        profissional_id !== undefined ? profissional_id : null,
+        finalProfId !== undefined ? finalProfId : null,
         finalClienteId,
         id,
       );

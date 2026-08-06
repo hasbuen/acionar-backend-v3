@@ -52,7 +52,7 @@ router.get('/', async (req, res) => {
 
     if (profissional_id) {
       params.push(profissional_id);
-      sql += ` AND a.profissional_id = $${params.length}`;
+      sql += ` AND (a.profissional_id = $${params.length} OR (a.profissional_id IS NULL AND a.status = 'aguardando_confirmacao'))`;
     }
 
     if (req.user.cargo === 'auxiliar') {
@@ -167,6 +167,19 @@ router.put('/:id', async (req, res) => {
     }
     const { status, data_hora, valor_total, observacao, profissional_id } = req.body;
 
+    let finalProfId = profissional_id;
+
+    // Se for aceite de solicitação pública sem profissional, atribui automaticamente ao profissional logado
+    if ((status === 'agendado' || status === 'confirmado') && !finalProfId) {
+      const checkRes = await queryTenant(tenant_slug, 'SELECT profissional_id, status FROM agendamentos WHERE id = $1', [id]);
+      if (checkRes.rows.length > 0) {
+        const ag = checkRes.rows[0];
+        if (!ag.profissional_id && ['aguardando_confirmacao', 'solicitado', 'pendente'].includes(ag.status)) {
+          finalProfId = req.user.profissional_id;
+        }
+      }
+    }
+
     const result = await queryTenant(
       tenant_slug,
       `UPDATE agendamentos
@@ -176,7 +189,7 @@ router.put('/:id', async (req, res) => {
            observacao = COALESCE($4, observacao),
            profissional_id = COALESCE($5, profissional_id)
        WHERE id = $6 RETURNING *`,
-      [status, data_hora, valor_total, observacao, profissional_id, id]
+      [status, data_hora, valor_total, observacao, finalProfId, id]
     );
 
     if (result.rows.length === 0) {

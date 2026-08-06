@@ -99,9 +99,9 @@ export class NotificationsService {
             endpoint: sub.endpoint,
             keys: { p256dh: sub.p256dh, auth: sub.auth }
           }, payload);
-        } catch (error) {
+        } catch (error: any) {
           console.error('Failed to send web push notification:', error);
-          const statusCode = error.statusCode || 0;
+          const statusCode = error.response?.statusCode || 0;
           if ([401, 403, 404, 410].includes(statusCode)) {
             await this.prisma.$executeRawUnsafe(
               'UPDATE push_subscriptions SET ativo = false WHERE id = $1',
