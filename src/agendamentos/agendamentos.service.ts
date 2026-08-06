@@ -1,13 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+
 
 @Injectable()
 export class AgendamentosService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(tenantSlug: string, query: any) {
+  async findAll(tenantSlug: string, user: any, query: any) {
     const { data_inicio, data_fim, status, profissional_id } = query;
     await this.prisma.ensureTenantSchema(tenantSlug);
+
+    const profIdFilter = profissional_id || user?.profissional_id;
 
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       let sql = `
@@ -35,8 +38,8 @@ export class AgendamentosService {
         params.push(status);
         sql += ` AND a.status = $${params.length}`;
       }
-      if (profissional_id) {
-        params.push(profissional_id);
+      if (profIdFilter) {
+        params.push(profIdFilter);
         sql += ` AND a.profissional_id = $${params.length}`;
       }
 
@@ -46,6 +49,7 @@ export class AgendamentosService {
       return { agendamentos };
     });
   }
+
 
   async create(tenantSlug: string, user: any, dto: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
@@ -80,17 +84,49 @@ export class AgendamentosService {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const { status, data_hora, valor_total, observacao, profissional_id } = dto;
-      
-      // Buscar agendamento atual
+
       const agendRes: any = await this.prisma.$queryRawUnsafe(
         'SELECT * FROM agendamentos WHERE id = $1',
-        id
+        id,
       );
-      
+
       if (!agendRes || agendRes.length === 0) throw new NotFoundException('Appointment not found.');
-      
+
       const agendamento = agendRes[0];
-      
+
+      let finalClienteId = agendamento.cliente_id;
+      const targetProfId = profissional_id || agendamento.profissional_id;
+
+      if (agendamento.cliente_id && targetProfId) {
+        const clientRows: any = await this.prisma.$queryRawUnsafe(
+          'SELECT * FROM clientes WHERE id = $1',
+          agendamento.cliente_id,
+        );
+        if (clientRows && clientRows.length > 0) {
+          const cliente = clientRows[0];
+          if (cliente.profissional_id !== targetProfId) {
+            const existingForProf: any = await this.prisma.$queryRawUnsafe(
+              'SELECT id FROM clientes WHERE whatsapp = $1 AND profissional_id = $2 LIMIT 1',
+              cliente.whatsapp || '',
+              targetProfId,
+            );
+            if (existingForProf && existingForProf.length > 0) {
+              finalClienteId = existingForProf[0].id;
+            } else {
+              const newC: any = await this.prisma.$queryRawUnsafe(
+                'INSERT INTO clientes (profissional_id, nome, whatsapp, email, observacoes) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+                targetProfId,
+                cliente.nome,
+                cliente.whatsapp || null,
+                cliente.email || null,
+                cliente.observacoes || null,
+              );
+              finalClienteId = newC[0].id;
+            }
+          }
+        }
+      }
+
       // Atualizar agendamento
       const res: any = await this.prisma.$queryRawUnsafe(
         `UPDATE agendamentos
@@ -99,15 +135,18 @@ export class AgendamentosService {
              valor_total = COALESCE($3::numeric, valor_total),
              observacao = COALESCE($4, observacao),
              profissional_id = COALESCE($5, profissional_id),
+             cliente_id = COALESCE($6, cliente_id),
              updated_at = NOW()
-         WHERE id = $6 RETURNING *`,
+         WHERE id = $7 RETURNING *`,
         status !== undefined ? status : null,
         data_hora !== undefined && data_hora !== '' ? data_hora : null,
         valor_total !== undefined ? valor_total : null,
         observacao !== undefined ? observacao : null,
         profissional_id !== undefined ? profissional_id : null,
-        id
+        finalClienteId,
+        id,
       );
+
 
       // Se status mudou para "concluido", consumir produtos
       if (status === 'concluido' && agendamento.status !== 'concluido' && !agendamento.estoque_consumido) {
@@ -181,14 +220,79 @@ export class AgendamentosService {
     );
   }
 
-  async remove(tenantSlug: string, id: number) {
+  async remove(tenantSlug: string, user: any, id: number) {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const res: any = await this.prisma.$queryRawUnsafe('DELETE FROM agendamentos WHERE id = $1 RETURNING id', id);
-      if (!res || res.length === 0) throw new NotFoundException('Appointment not found.');
-      return { message: 'Appointment deleted successfully.' };
+      const agendRes: any = await this.prisma.$queryRawUnsafe(
+        'SELECT * FROM agendamentos WHERE id = $1',
+        id,
+      );
+      if (!agendRes || agendRes.length === 0) throw new NotFoundException('Agendamento não encontrado.');
+      const agendamento = agendRes[0];
+
+      if (agendamento.profissional_id && agendamento.profissional_id !== user.profissional_id) {
+        throw new ForbiddenException('Você só pode excluir agendamentos atribuídos a você.');
+      }
+
+
+      // 1. Estorno no estoque (se o estoque foi consumido)
+      if (agendamento.estoque_consumido) {
+        // Buscar produtos vinculados ao serviço
+        const produtosServico: any = await this.prisma.$queryRawUnsafe(
+          'SELECT sp.produto_id, sp.quantidade_usada FROM servico_produtos sp WHERE sp.servico_id = $1',
+          agendamento.servico_id,
+        );
+
+        // Buscar produtos vinculados ao subserviço
+        const produtosSubservico: any = await this.prisma.$queryRawUnsafe(
+          'SELECT ssp.produto_id, ssp.quantidade_usada FROM subservico_produtos ssp WHERE ssp.subservico_id = $1',
+          agendamento.subservico_id,
+        );
+
+        const todosProdutos = [...(produtosServico || []), ...(produtosSubservico || [])];
+
+        for (const produtoVinculo of todosProdutos) {
+          const prodRes: any = await this.prisma.$queryRawUnsafe(
+            'SELECT * FROM estoque_produtos WHERE id = $1',
+            produtoVinculo.produto_id,
+          );
+          if (prodRes && prodRes.length > 0) {
+            const produto = prodRes[0];
+            const novaQtd = produto.quantidade + produtoVinculo.quantidade_usada;
+
+            // Devolver quantidade ao estoque
+            await this.prisma.$queryRawUnsafe(
+              'UPDATE estoque_produtos SET quantidade = $1 WHERE id = $2',
+              novaQtd,
+              produto.id,
+            );
+
+            // Registrar movimentação de entrada/estorno
+            await this.prisma.$queryRawUnsafe(
+              `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
+               VALUES ($1, $2, 'entrada', $3, $4)`,
+              produto.id,
+              agendamento.profissional_id,
+              produtoVinculo.quantidade_usada,
+              `Estorno por exclusão do agendamento #${agendamento.id}`,
+            );
+          }
+        }
+      }
+
+      // 2. Estorno no caixa (deleta todas as movimentações associadas a este agendamento)
+      await this.prisma.$queryRawUnsafe(
+        'DELETE FROM fluxo_caixa WHERE agendamento_id = $1',
+        id,
+      );
+
+      // 3. Exclui o agendamento
+      await this.prisma.$queryRawUnsafe('DELETE FROM agendamentos WHERE id = $1', id);
+
+      return { message: 'Agendamento deletado e estornos realizados com sucesso.' };
     });
   }
+
 
   async getPaymentData(tenantSlug: string, id: number) {
     await this.prisma.ensureTenantSchema(tenantSlug);

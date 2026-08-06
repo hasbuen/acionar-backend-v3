@@ -9,7 +9,7 @@ export class EstoqueController {
 
   @Get('produtos')
   async findProdutos(@Req() req: any) {
-    return this.estoqueService.findProdutos(req.user.tenant_slug);
+    return this.estoqueService.findProdutos(req.user.tenant_slug, req.user);
   }
 
   @Post('produtos')
@@ -19,7 +19,7 @@ export class EstoqueController {
 
   @Get('movimentacoes')
   async findMovimentacoes(@Req() req: any, @Query() query: any) {
-    return this.estoqueService.findMovimentacoes(req.user.tenant_slug, query);
+    return this.estoqueService.findMovimentacoes(req.user.tenant_slug, req.user, query);
   }
 
   @Post('movimentacoes')
@@ -34,6 +34,7 @@ export class EstoqueController {
 
   @Get('alertas')
   async findAlerts(@Req() req: any) {
-    return this.estoqueService.findAlerts(req.user.tenant_slug);
+    return this.estoqueService.findAlerts(req.user.tenant_slug, req.user);
   }
+
 }

@@ -102,9 +102,40 @@ export class ConfigService {
     };
   }
 
+  async getMessageConfig(tenantSlug: string) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const rows: any = await this.prisma.$queryRawUnsafe('SELECT valor FROM configuracoes WHERE chave = $1', 'mensagens');
+      const defaultSettings = {
+        endereco: 'Rua da amizade 515 bairro: 14 de novembro',
+        template_confirmacao: `📍 *Endereço*: {endereco}\n\nPor gentileza, informe se concorda com este horário ou se prefere realizar alguma alteração.\n\n📌 *Lembrete importante*: Pedimos a gentileza de chegar com **15 minutos de antecedência**.\n\nAgradecemos a preferência e aguardamos você!😊`,
+        template_manutencao: `Olá, *{cliente}*! 👋\n\nPassando para lembrar que sua *MANUTENÇÃO PERIÓDICA* de *{servico}* está agendada para o dia *{data}* às *{hora}*.\n\n📍 *Endereço*: {endereco}`,
+      };
+      const settings = rows[0]?.valor || defaultSettings;
+      return { settings };
+    });
+  }
+
+  async updateMessageConfig(tenantSlug: string, dto: any) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const settings = {
+        endereco: dto.endereco || '',
+        template_confirmacao: dto.template_confirmacao || '',
+        template_manutencao: dto.template_manutencao || '',
+      };
+      await this.prisma.$executeRawUnsafe(
+        'INSERT INTO configuracoes (chave, valor, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()',
+        'mensagens',
+        JSON.stringify(settings),
+      );
+      return { message: 'Configurações de mensagens salvas com sucesso.', settings };
+    });
+  }
+
   async uploadLogo(tenantSlug: string, imageBase64: string) {
     const cleanSlug = tenantSlug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
-    const uploadsDir = process.env.UPLOADS_DIR || '/var/www/acionar-v3/uploads';
+    const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
@@ -124,8 +155,8 @@ export class ConfigService {
     const filePath = path.join(uploadsDir, fileKey);
     fs.writeFileSync(filePath, buffer);
 
-    const publicHost = process.env.PUBLIC_HOST || 'https://76.13.230.110.nip.io';
-    const fotoUrl = `${publicHost}/uploads/${fileKey}`;
+    const publicHost = process.env.PUBLIC_HOST;
+    const fotoUrl = publicHost ? `${publicHost}/uploads/${fileKey}` : `/uploads/${fileKey}`;
 
     const tenant = await this.prisma.tenant.update({
       where: { slug: cleanSlug },
@@ -139,3 +170,4 @@ export class ConfigService {
     };
   }
 }
+

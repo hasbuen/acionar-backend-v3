@@ -9,7 +9,7 @@ export class CaixaController {
 
   @Get()
   async findAll(@Req() req: any, @Query() query: any) {
-    return this.caixaService.findAll(req.user.tenant_slug, query);
+    return this.caixaService.findAll(req.user.tenant_slug, req.user, query);
   }
 
   @Post()
@@ -19,11 +19,12 @@ export class CaixaController {
 
   @Patch(':id/baixar')
   async baixar(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.caixaService.baixar(req.user.tenant_slug, id, body.forma_pagamento);
+    return this.caixaService.baixar(req.user.tenant_slug, req.user, id, body.forma_pagamento);
   }
 
   @Delete(':id')
   async remove(@Req() req: any, @Param('id') id: string) {
-    return this.caixaService.remove(req.user.tenant_slug, id);
+    return this.caixaService.remove(req.user.tenant_slug, req.user, id);
   }
+
 }

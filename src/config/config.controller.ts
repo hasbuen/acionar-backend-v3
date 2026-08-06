@@ -27,8 +27,19 @@ export class ConfigController {
     return this.configService.updatePublicScheduleConfig(req.user.tenant_slug, body);
   }
 
+  @Get('messages')
+  async getMessageConfig(@Req() req: any) {
+    return this.configService.getMessageConfig(req.user.tenant_slug);
+  }
+
+  @Put('messages')
+  async updateMessageConfig(@Req() req: any, @Body() body: any) {
+    return this.configService.updateMessageConfig(req.user.tenant_slug, body);
+  }
+
   @Post('upload-logo')
   async uploadLogo(@Req() req: any, @Body() body: { imageBase64: string }) {
     return this.configService.uploadLogo(req.user.tenant_slug, body.imageBase64);
   }
 }
+

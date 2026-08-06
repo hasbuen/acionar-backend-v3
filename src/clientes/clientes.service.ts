@@ -1,27 +1,44 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class ClientesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(tenantSlug: string) {
+  async findAll(tenantSlug: string, user?: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
+    const profId = user?.profissional_id;
+
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const clientes: any = await this.prisma.$queryRawUnsafe('SELECT * FROM clientes ORDER BY nome ASC');
+      let sql = 'SELECT * FROM clientes WHERE 1=1';
+      const params: any[] = [];
+
+      if (profId) {
+        params.push(profId);
+        sql += ` AND profissional_id = $${params.length}`;
+      }
+
+      sql += ' ORDER BY nome ASC';
+
+      const clientes: any = await this.prisma.$queryRawUnsafe(sql, ...params);
       return { clientes };
     });
   }
 
-  async create(tenantSlug: string, dto: any) {
+
+  async create(tenantSlug: string, user: any, dto: any) {
     const { nome, whatsapp, email, observacoes } = dto;
-    if (!nome) throw new BadRequestException('Client name is required.');
+    if (!nome) throw new BadRequestException('Nome do cliente é obrigatório.');
 
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const res: any = await this.prisma.$queryRawUnsafe(
-        'INSERT INTO clientes (nome, whatsapp, email, observacoes) VALUES ($1, $2, $3, $4) RETURNING *',
-        nome, whatsapp || null, email || null, observacoes || null
+        'INSERT INTO clientes (profissional_id, nome, whatsapp, email, observacoes) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        user?.profissional_id || null,
+        nome,
+        whatsapp || null,
+        email || null,
+        observacoes || null,
       );
       return { cliente: res[0] };
     });
@@ -38,11 +55,62 @@ export class ClientesService {
              email = COALESCE($3, email),
              observacoes = COALESCE($4, observacoes)
          WHERE id = $5 RETURNING *`,
-        nome, whatsapp, email, observacoes, id
+        nome,
+        whatsapp,
+        email,
+        observacoes,
+        id,
       );
 
-      if (!res || res.length === 0) throw new NotFoundException('Client not found.');
+      if (!res || res.length === 0) throw new NotFoundException('Cliente não encontrado.');
       return { cliente: res[0] };
     });
   }
+
+  async transferir(tenantSlug: string, id: number, profissionalDestinoId: number) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const res: any = await this.prisma.$queryRawUnsafe(
+        'UPDATE clientes SET profissional_id = $1 WHERE id = $2 RETURNING *',
+        profissionalDestinoId,
+        id,
+      );
+      if (!res || res.length === 0) throw new NotFoundException('Cliente não encontrado.');
+      return { cliente: res[0], message: 'Cadastro do cliente transferido com sucesso.' };
+    });
+  }
+
+  async remove(tenantSlug: string, user: any, id: number) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const clientRes: any = await this.prisma.$queryRawUnsafe(
+        'SELECT profissional_id FROM clientes WHERE id = $1',
+        id,
+      );
+      if (!clientRes || clientRes.length === 0) throw new NotFoundException('Cliente não encontrado.');
+      if (clientRes[0].profissional_id && clientRes[0].profissional_id !== user.profissional_id) {
+        throw new ForbiddenException('Você só pode excluir clientes de sua propriedade.');
+      }
+
+      const agRes: any = await this.prisma.$queryRawUnsafe(
+        'SELECT id FROM agendamentos WHERE cliente_id = $1 ORDER BY id ASC',
+        id,
+      );
+      if (agRes && agRes.length > 0) {
+        const listIds = agRes.map((a: any) => `#${a.id}`).join(', ');
+        throw new BadRequestException(`Cliente possui os agendamentos ${listIds} registrados.`);
+      }
+
+      const res: any = await this.prisma.$queryRawUnsafe(
+        'DELETE FROM clientes WHERE id = $1 RETURNING *',
+        id,
+      );
+
+      return { message: 'Cliente removido com sucesso.' };
+    });
+  }
 }
+
+
+
+

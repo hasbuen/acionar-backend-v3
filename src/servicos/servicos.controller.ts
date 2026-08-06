@@ -9,20 +9,52 @@ export class ServicosController {
 
   @Get()
   async findAll(@Req() req: any) {
-    return this.servicosService.findAll(req.user.tenant_slug);
+    return this.servicosService.findAll(req.user.tenant_slug, req.user);
+  }
+
+  @Post(':id/toggle-atendo')
+  async toggleServicoAtendo(@Req() req: any, @Param('id') id: string) {
+    return this.servicosService.toggleServicoAtendo(req.user.tenant_slug, req.user, parseInt(id, 10));
+  }
+
+  @Post('subservicos/:subId/toggle-atendo')
+  async toggleSubservicoAtendo(@Req() req: any, @Param('subId') subId: string) {
+    return this.servicosService.toggleSubservicoAtendo(req.user.tenant_slug, req.user, parseInt(subId, 10));
   }
 
   @Post()
   async create(@Req() req: any, @Body() body: any) {
-    return this.servicosService.create(req.user.tenant_slug, body);
+    return this.servicosService.create(req.user.tenant_slug, req.user, body);
   }
 
   @Put(':id')
   async update(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.servicosService.update(req.user.tenant_slug, parseInt(id, 10), body);
+    return this.servicosService.update(req.user.tenant_slug, req.user, parseInt(id, 10), body);
   }
 
+  @Delete(':id')
+  async delete(@Req() req: any, @Param('id') id: string) {
+    return this.servicosService.deleteServico(req.user.tenant_slug, req.user, parseInt(id, 10));
+  }
+
+  @Post(':id/subservicos')
+  async createSubservico(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    return this.servicosService.createSubservico(req.user.tenant_slug, req.user, parseInt(id, 10), body);
+  }
+
+  @Put(':id/subservicos/:subId')
+  async updateSubservico(@Req() req: any, @Param('id') id: string, @Param('subId') subId: string, @Body() body: any) {
+    return this.servicosService.updateSubservico(req.user.tenant_slug, req.user, parseInt(subId, 10), body);
+  }
+
+  @Delete(':id/subservicos/:subId')
+  async deleteSubservico(@Req() req: any, @Param('id') id: string, @Param('subId') subId: string) {
+    return this.servicosService.deleteSubservico(req.user.tenant_slug, req.user, parseInt(subId, 10));
+  }
+
+
   @Post(':id/produtos')
+
   async vincularProduto(@Req() req: any, @Param('id') id: string, @Body() body: any) {
     return this.servicosService.vincularProduto(req.user.tenant_slug, parseInt(id, 10), body);
   }

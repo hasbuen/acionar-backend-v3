@@ -1,18 +1,32 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+
 
 @Injectable()
 export class EstoqueService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findProdutos(tenantSlug: string) {
+  async findProdutos(tenantSlug: string, user?: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
+    const profId = user?.profissional_id;
+
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const produtos: any = await this.prisma.$queryRawUnsafe('SELECT * FROM estoque_produtos ORDER BY nome ASC');
-      
+      let sql = 'SELECT * FROM estoque_produtos WHERE 1=1';
+      const params: any[] = [];
+
+      if (profId) {
+        params.push(profId);
+        sql += ` AND profissional_id = $${params.length}`;
+      }
+
+
+      sql += ' ORDER BY nome ASC';
+
+      const produtos: any = await this.prisma.$queryRawUnsafe(sql, ...params);
+
       let totalValor = 0;
       let produtosAlerta = 0;
-      
+
       produtos.forEach((p: any) => {
         const valor = parseFloat(p.custo_unitario || 0) * (p.quantidade || 0);
         totalValor += valor;
@@ -27,15 +41,15 @@ export class EstoqueService {
           total_produtos: produtos.length,
           valor_total_estoque: Math.round(totalValor * 100) / 100,
           produtos_em_alerta: produtosAlerta,
-          estado_geral: produtosAlerta > 0 ? 'com-alertas' : 'ok'
-        }
+          estado_geral: produtosAlerta > 0 ? 'com-alertas' : 'ok',
+        },
       };
     });
   }
 
   async createProduto(tenantSlug: string, user: any, dto: any) {
     const { nome, tipo, quantidade, estoque_minimo, custo_unitario, imagem_url, status_pagamento } = dto;
-    if (!nome) throw new BadRequestException('Product name is required.');
+    if (!nome) throw new BadRequestException('Nome do produto é obrigatório.');
 
     const qtd = parseInt(quantidade || 0, 10);
     const custo = parseFloat(custo_unitario || 0);
@@ -52,7 +66,7 @@ export class EstoqueService {
         qtd,
         estoque_minimo || 1,
         custo,
-        imagem_url || null
+        imagem_url || null,
       );
 
       const produto = res[0];
@@ -61,7 +75,9 @@ export class EstoqueService {
         await this.prisma.$queryRawUnsafe(
           `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
            VALUES ($1, $2, 'entrada', $3, 'Estoque inicial cadastrado')`,
-          produto.id, user.profissional_id, qtd
+          produto.id,
+          user.profissional_id,
+          qtd,
         );
 
         if (custo > 0) {
@@ -74,7 +90,7 @@ export class EstoqueService {
             user.profissional_id,
             `Compra de Insumo: ${nome} (${qtd} un × R$ ${custo.toFixed(2)})`,
             totalCusto,
-            statusPag
+            statusPag,
           );
         }
       }
@@ -95,24 +111,32 @@ export class EstoqueService {
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const prodRes: any = await this.prisma.$queryRawUnsafe(
         'SELECT * FROM estoque_produtos WHERE id = $1',
-        produto_id
+        produto_id,
       );
       if (!prodRes || prodRes.length === 0) throw new NotFoundException('Produto não encontrado.');
 
       const produto = prodRes[0];
+      if (produto.profissional_id && produto.profissional_id !== user.profissional_id) {
+        throw new ForbiddenException('Você só pode movimentar produtos de sua propriedade.');
+      }
+
       const novaQtd = tipo === 'entrada' ? produto.quantidade + qtyNum : Math.max(0, produto.quantidade - qtyNum);
+
 
       await this.prisma.$queryRawUnsafe('UPDATE estoque_produtos SET quantidade = $1 WHERE id = $2', novaQtd, produto_id);
 
       const movRes: any = await this.prisma.$queryRawUnsafe(
         `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        produto_id, user.profissional_id, tipo, qtyNum, motivo || null
+        produto_id,
+        user.profissional_id,
+        tipo,
+        qtyNum,
+        motivo || null,
       );
 
       const custo = parseFloat(produto.custo_unitario || 0);
       if (custo > 0 && tipo === 'entrada') {
-        // Só registra saída no caixa em entradas de reposição (compra de mais unidades)
         const total = qtyNum * custo;
         const desc = `Reposição de Estoque: ${produto.nome} (${qtyNum} un × R$ ${custo.toFixed(2)})`;
         const statusPag = status_pagamento || 'pago';
@@ -124,7 +148,7 @@ export class EstoqueService {
           user.profissional_id,
           desc,
           total,
-          statusPag
+          statusPag,
         );
       }
 
@@ -134,34 +158,88 @@ export class EstoqueService {
 
   async transferProduto(tenantSlug: string, user: any, dto: any) {
     const { produto_id, profissional_destino_id, quantidade } = dto;
-    if (!produto_id || !quantidade) {
-      throw new BadRequestException('Produto e quantidade são obrigatórios.');
+    if (!produto_id || !quantidade || !profissional_destino_id) {
+      throw new BadRequestException('Produto, quantidade e profissional de destino são obrigatórios.');
     }
 
     const qtyNum = parseInt(quantidade, 10);
+    const destProfId = parseInt(profissional_destino_id, 10);
     await this.prisma.ensureTenantSchema(tenantSlug);
 
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const prodRes: any = await this.prisma.$queryRawUnsafe('SELECT * FROM estoque_produtos WHERE id = $1', produto_id);
-      if (!prodRes || prodRes.length === 0) throw new NotFoundException('Produto não encontrado.');
+      if (!prodRes || prodRes.length === 0) throw new NotFoundException('Produto não encontrado no estoque.');
 
-      const produto = prodRes[0];
-      const novaQtd = Math.max(0, produto.quantidade - qtyNum);
-      await this.prisma.$queryRawUnsafe('UPDATE estoque_produtos SET quantidade = $1 WHERE id = $2', novaQtd, produto_id);
+      const produtoOrigem = prodRes[0];
+      if (produtoOrigem.profissional_id && produtoOrigem.profissional_id !== user.profissional_id) {
+        throw new ForbiddenException('Você só pode transferir produtos de sua propriedade.');
+      }
 
+      if (produtoOrigem.quantidade < qtyNum) {
+        throw new BadRequestException(`Saldo insuficiente em estoque (${produtoOrigem.quantidade} disponíveis).`);
+      }
+
+
+      // 1. Debita quantidade do produto de origem
+      const novaQtdOrigem = produtoOrigem.quantidade - qtyNum;
+      await this.prisma.$queryRawUnsafe('UPDATE estoque_produtos SET quantidade = $1 WHERE id = $2', novaQtdOrigem, produto_id);
+
+      // Registra movimentacao de saida no remetente
       await this.prisma.$queryRawUnsafe(
         `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
          VALUES ($1, $2, 'saida', $3, $4)`,
-        produto_id, user.profissional_id, qtyNum, `Transferência para profissional ${profissional_destino_id || 'auxiliar'}`
+        produto_id,
+        user.profissional_id,
+        qtyNum,
+        `Transferência enviada para o profissional #${destProfId}`,
       );
 
-      return { message: 'Transferência concluída com sucesso.', nova_quantidade: novaQtd };
+      // 2. Transfere para o produto do destinatario (cria se nao existir)
+      const destProdRes: any = await this.prisma.$queryRawUnsafe(
+        'SELECT * FROM estoque_produtos WHERE nome = $1 AND profissional_id = $2',
+        produtoOrigem.nome,
+        destProfId,
+      );
+
+      let destProdId: number;
+      if (destProdRes && destProdRes.length > 0) {
+        destProdId = destProdRes[0].id;
+        const novaQtdDest = destProdRes[0].quantidade + qtyNum;
+        await this.prisma.$queryRawUnsafe('UPDATE estoque_produtos SET quantidade = $1 WHERE id = $2', novaQtdDest, destProdId);
+      } else {
+        const newProd: any = await this.prisma.$queryRawUnsafe(
+          `INSERT INTO estoque_produtos (
+            profissional_id, nome, tipo, quantidade, estoque_minimo, custo_unitario, imagem_url
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          destProfId,
+          produtoOrigem.nome,
+          produtoOrigem.tipo,
+          qtyNum,
+          produtoOrigem.estoque_minimo,
+          produtoOrigem.custo_unitario,
+          produtoOrigem.imagem_url,
+        );
+        destProdId = newProd[0].id;
+      }
+
+      // Registra movimentacao de entrada no destinatario
+      await this.prisma.$queryRawUnsafe(
+        `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
+         VALUES ($1, $2, 'entrada', $3, $4)`,
+        destProdId,
+        destProfId,
+        qtyNum,
+        `Transferência recebida do profissional #${user.profissional_id}`,
+      );
+
+      return { message: 'Transferência de produto realizada com sucesso.', nova_quantidade: novaQtdOrigem };
     });
   }
 
-  async findMovimentacoes(tenantSlug: string, query: any) {
+  async findMovimentacoes(tenantSlug: string, user: any, query: any) {
     const { produto_id, tipo, data_inicio, data_fim } = query;
     await this.prisma.ensureTenantSchema(tenantSlug);
+    const profId = user?.profissional_id;
 
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       let sql = `
@@ -172,6 +250,12 @@ export class EstoqueService {
         WHERE 1=1
       `;
       const params: any[] = [];
+
+      if (profId) {
+        params.push(profId);
+        sql += ` AND em.profissional_id = $${params.length}`;
+      }
+
 
       if (produto_id) {
         params.push(produto_id);
@@ -197,20 +281,30 @@ export class EstoqueService {
     });
   }
 
-  async findAlerts(tenantSlug: string) {
+  async findAlerts(tenantSlug: string, user?: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
+    const profId = user?.profissional_id;
+
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const alertas: any = await this.prisma.$queryRawUnsafe(
-        `SELECT id, nome, quantidade, estoque_minimo, (estoque_minimo - quantidade) as deficit
-         FROM estoque_produtos
-         WHERE quantidade <= estoque_minimo
-         ORDER BY deficit DESC`
-      );
+      let sql = `SELECT id, nome, quantidade, estoque_minimo, (estoque_minimo - quantidade) as deficit
+                 FROM estoque_produtos
+                 WHERE quantidade <= estoque_minimo`;
+      const params: any[] = [];
+
+      if (profId) {
+        params.push(profId);
+        sql += ` AND profissional_id = $${params.length}`;
+      }
+
+
+      sql += ' ORDER BY deficit DESC';
+
+      const alertas: any = await this.prisma.$queryRawUnsafe(sql, ...params);
 
       return {
         alertas,
         total_alertas: alertas.length,
-        urgencia: alertas.length > 5 ? 'alta' : alertas.length > 0 ? 'media' : 'nenhuma'
+        urgencia: alertas.length > 5 ? 'alta' : alertas.length > 0 ? 'media' : 'nenhuma',
       };
     });
   }

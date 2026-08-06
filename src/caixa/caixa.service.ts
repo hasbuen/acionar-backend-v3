@@ -1,16 +1,19 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+
 // Statuses de agendamento que são excluídos do fluxo de caixa
-const STATUSES_EXCLUIDOS = ['cancelado', 'aguardando_confirmacao', 'solicitado'];
+const STATUSES_EXCLUIDOS = ['cancelado', 'solicitado', 'solicitacao', 'aguardando_confirmacao'];
 
 @Injectable()
 export class CaixaService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(tenantSlug: string, query: any) {
+  async findAll(tenantSlug: string, user: any, query: any) {
     const { data_inicio, data_fim, periodo } = query;
     await this.prisma.ensureTenantSchema(tenantSlug);
+
+    const profId = user?.profissional_id;
 
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       // ─── Monta filtros de data ─────────────────────────────────────────
@@ -44,8 +47,15 @@ export class CaixaService {
          LEFT JOIN agendamentos a ON fc.agendamento_id = a.id
          LEFT JOIN clientes c ON a.cliente_id = c.id
          LEFT JOIN servicos s ON a.servico_id = s.id
-         WHERE 1=1`;
+         WHERE (fc.categoria IS NULL OR fc.categoria <> 'ignorado')
+           AND (fc.status IS NULL OR fc.status <> 'cancelado')`;
       const paramsFC: any[] = [];
+
+      if (profId) {
+        paramsFC.push(profId);
+        sqlFC += ` AND fc.profissional_id = $${paramsFC.length}`;
+      }
+
 
       if (dataInicio) {
         paramsFC.push(dataInicio);
@@ -59,31 +69,40 @@ export class CaixaService {
 
       const lancamentosReais: any[] = await this.prisma.$queryRawUnsafe(sqlFC, ...paramsFC);
 
-      // IDs de agendamentos que já possuem lançamento vinculado (array de números)
-      const agIdsComLancamento: number[] = lancamentosReais
-        .filter((r) => r.agendamento_id != null)
-        .map((r) => Number(r.agendamento_id));
+      // IDs de agendamentos que já possuem lançamento ou foram ignorados no caixa
+      const agIgnoradosOrLancados: any[] = await this.prisma.$queryRawUnsafe(
+        `SELECT DISTINCT agendamento_id FROM fluxo_caixa WHERE agendamento_id IS NOT NULL`
+      );
+      const agIdsIgnoradosOuLancados: number[] = agIgnoradosOrLancados.map((r) => Number(r.agendamento_id));
 
-      // ─── 2. Busca agendamentos pendentes sem lançamento ───────────────
+      // ─── 2. Busca agendamentos ativos sem lançamento em fluxo_caixa ───
       let sqlAG =
-        `SELECT a.id, a.data_hora, a.valor_total, a.status,
+        `SELECT a.id, a.data_hora, a.valor_total, a.status, a.servico_id, a.subservico_id,
                 c.nome as cliente_nome,
-                s.nome as servico_nome
+                s.nome as servico_nome,
+                sub.nome as subservico_nome,
+                sub.preco_adicional
          FROM agendamentos a
          LEFT JOIN clientes c ON a.cliente_id = c.id
          LEFT JOIN servicos s ON a.servico_id = s.id
-         WHERE a.status <> ALL($1::text[])
+         LEFT JOIN subservicos sub ON a.subservico_id = sub.id
+         WHERE (a.status IS NULL OR LOWER(a.status) <> ALL($1::text[]))
            AND (
              $2::int[] IS NULL
              OR array_length($2::int[], 1) IS NULL
              OR a.id <> ALL($2::int[])
            )`;
       const paramsAG: any[] = [
-        STATUSES_EXCLUIDOS,       // $1 — array de statuses a excluir
-        agIdsComLancamento,       // $2 — IDs já lançados (pode ser array vazio)
+        STATUSES_EXCLUIDOS.map((s) => s.toLowerCase()),
+        agIdsIgnoradosOuLancados,
       ];
 
-      // Filtro de data sobre data_hora do agendamento
+      if (profId) {
+        paramsAG.push(profId);
+        sqlAG += ` AND a.profissional_id = $${paramsAG.length}`;
+      }
+
+
       if (dataInicio) {
         paramsAG.push(dataInicio);
         sqlAG += ` AND a.data_hora >= $${paramsAG.length}::date`;
@@ -94,18 +113,83 @@ export class CaixaService {
       }
       sqlAG += ' ORDER BY a.data_hora DESC';
 
+
       const agendamentosOrfaos: any[] = await this.prisma.$queryRawUnsafe(sqlAG, ...paramsAG);
 
-      // ─── 3. Transforma agendamentos em lançamentos virtuais ──────────
+      // ─── 3. Busca produtos vinculados para gerar virtuais de insumo ───
+      let produtosVirtuais: any[] = [];
+
+      for (const ag of agendamentosOrfaos) {
+        let servicoDesc = ag.servico_nome || 'Serviço';
+        if (ag.subservico_nome) {
+          servicoDesc += ` + ${ag.subservico_nome}`;
+        }
+        const clienteDesc = ag.cliente_nome || 'Cliente';
+
+        const isPaid = ['pago', 'recebido', 'quitado', 'concluido', 'atendido'].includes(String(ag.status || '').toLowerCase());
+
+        // Buscar insumos vinculados ao serviço
+        const matsServico: any[] = ag.servico_id
+          ? await this.prisma.$queryRawUnsafe(
+              `SELECT sp.produto_id, sp.quantidade_usada, ep.nome as produto_nome, ep.custo_unitario
+               FROM servico_produtos sp
+               JOIN estoque_produtos ep ON sp.produto_id = ep.id
+               WHERE sp.servico_id = $1`,
+              ag.servico_id,
+            )
+          : [];
+
+        // Buscar insumos vinculados ao subserviço
+        const matsSubservico: any[] = ag.subservico_id
+          ? await this.prisma.$queryRawUnsafe(
+              `SELECT ssp.produto_id, ssp.quantidade_usada, ep.nome as produto_nome, ep.custo_unitario
+               FROM subservico_produtos ssp
+               JOIN estoque_produtos ep ON ssp.produto_id = ep.id
+               WHERE ssp.subservico_id = $1`,
+              ag.subservico_id,
+            )
+          : [];
+
+        const todosMats = [...matsServico, ...matsSubservico];
+
+        for (const mat of todosMats) {
+          const custo = parseFloat(mat.custo_unitario || 0);
+          if (custo > 0) {
+            const totalCusto = mat.quantidade_usada * custo;
+            produtosVirtuais.push({
+              id: `ag-mat-${ag.id}-${mat.produto_id}`,
+              agendamento_id: ag.id,
+              profissional_id: null,
+              tipo: 'saida',
+              categoria: 'material',
+              descricao: `Insumo: ${mat.produto_nome} (${mat.quantidade_usada} un) — ${clienteDesc} (${servicoDesc})`,
+              valor: totalCusto,
+              status: isPaid ? 'pago' : 'pendente',
+              forma_pagamento: 'consumo',
+              data_movimento: ag.data_hora,
+              cliente_nome: clienteDesc,
+              servico_nome: servicoDesc,
+              origem: 'material',
+            });
+          }
+        }
+      }
+
+      // ─── 4. Transforma agendamentos em lançamentos virtuais ──────────
       const lancamentosVirtuais = agendamentosOrfaos.map((ag) => {
-        const isPaid = ['pago', 'recebido', 'quitado'].includes(String(ag.status).toLowerCase());
+        const isPaid = ['pago', 'recebido', 'quitado', 'concluido', 'atendido'].includes(String(ag.status || '').toLowerCase());
+        let desc = `Atendimento — ${ag.cliente_nome || 'Cliente'} / ${ag.servico_nome || 'Serviço'}`;
+        if (ag.subservico_nome) {
+          desc += ` (+ ${ag.subservico_nome})`;
+        }
+
         return {
           id: `ag-${ag.id}`,
           agendamento_id: ag.id,
           profissional_id: null,
           tipo: 'entrada',
           categoria: 'agendamento',
-          descricao: `Atendimento — ${ag.cliente_nome || 'Cliente'} / ${ag.servico_nome || 'Serviço'}`,
+          descricao: desc,
           valor: ag.valor_total ?? 0,
           status: isPaid ? 'pago' : 'pendente',
           forma_pagamento: isPaid ? 'pix' : null,
@@ -116,14 +200,14 @@ export class CaixaService {
         };
       });
 
-      // ─── 4. Mescla e ordena por data desc ────────────────────────────
-      const movimentacoes = [...lancamentosReais, ...lancamentosVirtuais].sort((a, b) => {
+      // ─── 5. Mescla e ordena por data desc ────────────────────────────
+      const movimentacoes = [...lancamentosReais, ...lancamentosVirtuais, ...produtosVirtuais].sort((a, b) => {
         const da = new Date(a.data_movimento).getTime();
         const db = new Date(b.data_movimento).getTime();
         return db - da;
       });
 
-      // ─── 5. Calcula resumo ────────────────────────────────────────────
+      // ─── 6. Calcula resumo ────────────────────────────────────────────
       let totalEntradas = 0;
       let totalAReceber = 0;
       let totalSaidas = 0;
@@ -183,7 +267,7 @@ export class CaixaService {
         resumo: {
           totalEntradas: Math.round(totalEntradas * 100) / 100,
           totalAReceber: Math.round(totalAReceber * 100) / 100,
-          totalReceber: Math.round(totalAReceber * 100) / 100, // alias
+          totalReceber: Math.round(totalAReceber * 100) / 100,
           totalSaidas: Math.round(totalSaidas * 100) / 100,
           totalSaidasPendente: Math.round(totalSaidasPendente * 100) / 100,
           saldo: Math.round((totalEntradas - totalSaidas) * 100) / 100,
@@ -227,7 +311,7 @@ export class CaixaService {
    * - Se id = "ag-<n>": cria o registro real no fluxo_caixa vinculado ao agendamento.
    * - Se id numérico: atualiza o status do registro existente para 'pago'.
    */
-  async baixar(tenantSlug: string, id: string, forma_pagamento: string) {
+  async baixar(tenantSlug: string, user: any, id: string, forma_pagamento: string) {
     if (!forma_pagamento) {
       throw new BadRequestException('Forma de pagamento é obrigatória.');
     }
@@ -235,16 +319,18 @@ export class CaixaService {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       // ─── Lançamento virtual de agendamento ─────────────────────────
-      if (id.startsWith('ag-')) {
-        const agendamentoId = parseInt(id.replace('ag-', ''), 10);
+      if (String(id).startsWith('ag-')) {
+        const cleanIdStr = String(id).replace('ag-mat-', '').replace('ag-', '');
+        const agendamentoId = parseInt(cleanIdStr.split('-')[0], 10);
 
         const agRows: any[] = await this.prisma.$queryRawUnsafe(
           `SELECT a.id, a.valor_total, a.data_hora,
-                  c.nome as cliente_nome, s.nome as servico_nome
+                  c.nome as cliente_nome, s.nome as servico_nome, sub.nome as subservico_nome
            FROM agendamentos a
            LEFT JOIN clientes c ON a.cliente_id = c.id
            LEFT JOIN servicos s ON a.servico_id = s.id
-           WHERE a.id = $1 AND a.status = ANY($2::text[])`,
+           LEFT JOIN subservicos sub ON a.subservico_id = sub.id
+           WHERE a.id = $1 AND (a.status IS NULL OR LOWER(a.status) <> ALL($2::text[]))`,
           agendamentoId,
           STATUSES_EXCLUIDOS.map((s) => s.toLowerCase()),
         );
@@ -254,18 +340,23 @@ export class CaixaService {
         }
 
         const ag = agRows[0];
-        const descricao = `Atendimento — ${ag.cliente_nome || 'Cliente'} / ${ag.servico_nome || 'Serviço'}`;
+        let descricao = `Atendimento — ${ag.cliente_nome || 'Cliente'} / ${ag.servico_nome || 'Serviço'}`;
+        if (ag.subservico_nome) {
+          descricao += ` (+ ${ag.subservico_nome})`;
+        }
         const dataMovimento = new Date(ag.data_hora).toISOString().split('T')[0];
 
         const res: any = await this.prisma.$queryRawUnsafe(
-          `INSERT INTO fluxo_caixa (agendamento_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento)
-           VALUES ($1, 'entrada', 'agendamento', $2, $3, 'pago', $4, $5::date) RETURNING *`,
+          `INSERT INTO fluxo_caixa (agendamento_id, profissional_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento)
+           VALUES ($1, $2, 'entrada', 'agendamento', $3, $4, 'pago', $5, $6::date) RETURNING *`,
           agendamentoId,
+          user?.profissional_id || null,
           descricao,
           ag.valor_total ?? 0,
           forma_pagamento,
           dataMovimento,
         );
+
 
         return { movimentacao: res[0], message: 'Baixa realizada com sucesso.' };
       }
@@ -292,22 +383,47 @@ export class CaixaService {
     });
   }
 
-  async remove(tenantSlug: string, id: string) {
-    if (String(id).startsWith('ag-')) {
-      throw new BadRequestException(
-        'Agendamentos pendentes não podem ser excluídos pelo caixa. Cancele o agendamento na tela de Agenda.',
-      );
-    }
-
-    const numericId = parseInt(String(id), 10);
+  async remove(tenantSlug: string, user: any, id: string) {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const res: any = await this.prisma.$queryRawUnsafe(
-        'DELETE FROM fluxo_caixa WHERE id = $1 RETURNING id',
+      if (String(id).startsWith('ag-')) {
+        const cleanIdStr = String(id).replace('ag-mat-', '').replace('ag-', '');
+        const agendamentoId = parseInt(cleanIdStr.split('-')[0], 10);
+
+        if (!isNaN(agendamentoId)) {
+          await this.prisma.$queryRawUnsafe(
+            `INSERT INTO fluxo_caixa (agendamento_id, profissional_id, tipo, categoria, descricao, valor, status, data_movimento)
+             VALUES ($1, $2, 'saida', 'ignorado', 'Lançamento ocultado no caixa', 0, 'cancelado', CURRENT_DATE)`,
+            agendamentoId,
+            user?.profissional_id || null,
+          );
+        }
+        return { message: 'Lançamento ocultado do caixa com sucesso.' };
+      }
+
+
+      const numericId = parseInt(String(id), 10);
+      if (isNaN(numericId)) {
+        throw new BadRequestException('ID de lançamento inválido.');
+      }
+
+      const existing: any = await this.prisma.$queryRawUnsafe(
+        'SELECT profissional_id FROM fluxo_caixa WHERE id = $1',
         numericId,
       );
-      if (!res || res.length === 0) throw new NotFoundException('Lançamento de caixa não encontrado.');
+      if (!existing || existing.length === 0) {
+        throw new NotFoundException('Lançamento não encontrado.');
+      }
+      if (existing[0].profissional_id && existing[0].profissional_id !== user.profissional_id) {
+        throw new ForbiddenException('Você só pode excluir lançamentos do seu próprio caixa.');
+      }
+
+      await this.prisma.$queryRawUnsafe(
+        'DELETE FROM fluxo_caixa WHERE id = $1',
+        numericId,
+      );
       return { message: 'Lançamento excluído com sucesso.' };
     });
   }
 }
+

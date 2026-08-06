@@ -144,12 +144,23 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           foto_url TEXT,
           ativo BOOLEAN DEFAULT true,
           senha_hash TEXT,
+          cor_identificadora VARCHAR(20) DEFAULT '#8c52ff',
+          aceita_atendimento_externo BOOLEAN DEFAULT false,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
       `);
 
       await tenantClient.$executeRawUnsafe(`
+        ALTER TABLE profissionais ADD COLUMN IF NOT EXISTS cor_identificadora VARCHAR(20) DEFAULT '#8c52ff';
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        ALTER TABLE profissionais ADD COLUMN IF NOT EXISTS aceita_atendimento_externo BOOLEAN DEFAULT false;
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS servicos (
+
           id SERIAL PRIMARY KEY,
           nome VARCHAR(100) NOT NULL,
           descricao TEXT,
@@ -175,6 +186,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       await tenantClient.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS clientes (
           id SERIAL PRIMARY KEY,
+          profissional_id INT REFERENCES profissionais(id) ON DELETE SET NULL,
           nome VARCHAR(100) NOT NULL,
           whatsapp VARCHAR(30),
           email VARCHAR(120),
@@ -182,6 +194,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
       `);
+
+      await tenantClient.$executeRawUnsafe(`
+        ALTER TABLE clientes ADD COLUMN IF NOT EXISTS profissional_id INT REFERENCES profissionais(id) ON DELETE SET NULL;
+      `);
+
 
       await tenantClient.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS agendamentos (
@@ -273,8 +290,50 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           PRIMARY KEY (subservico_id, produto_id)
         );
       `);
+
+      await tenantClient.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS profissional_servicos (
+          profissional_id INT REFERENCES profissionais(id) ON DELETE CASCADE,
+          servico_id INT REFERENCES servicos(id) ON DELETE CASCADE,
+          ativo BOOLEAN DEFAULT true,
+          PRIMARY KEY (profissional_id, servico_id)
+        );
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS profissional_subservicos (
+          profissional_id INT REFERENCES profissionais(id) ON DELETE CASCADE,
+          subservico_id INT REFERENCES subservicos(id) ON DELETE CASCADE,
+          ativo BOOLEAN DEFAULT true,
+          PRIMARY KEY (profissional_id, subservico_id)
+        );
+      `);
+
+      // Migração de profissional_id em servicos e subservicos
+      await tenantClient.$executeRawUnsafe(`
+        ALTER TABLE servicos ADD COLUMN IF NOT EXISTS profissional_id INT REFERENCES profissionais(id) ON DELETE SET NULL;
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        ALTER TABLE subservicos ADD COLUMN IF NOT EXISTS profissional_id INT REFERENCES profissionais(id) ON DELETE SET NULL;
+      `);
+
+      // Migração retroativa de registros NULL para o proprietário do tenant
+      await tenantClient.$executeRawUnsafe(`
+        UPDATE clientes SET profissional_id = (SELECT id FROM profissionais WHERE cargo = 'proprietario' LIMIT 1) WHERE profissional_id IS NULL;
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        UPDATE servicos SET profissional_id = (SELECT id FROM profissionais WHERE cargo = 'proprietario' LIMIT 1) WHERE profissional_id IS NULL;
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        UPDATE subservicos SET profissional_id = (SELECT id FROM profissionais WHERE cargo = 'proprietario' LIMIT 1) WHERE profissional_id IS NULL;
+      `);
+
     } catch (err) {
       console.error(`[DATABASE MULTI-TENANT] Falha crítica de migração DDL no banco ${dbName}:`, err.message);
     }
   }
 }
+

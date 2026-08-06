@@ -9,8 +9,9 @@ export class AgendamentosController {
 
   @Get()
   async findAll(@Req() req: any, @Query() query: any) {
-    return this.agendamentosService.findAll(req.user.tenant_slug, query);
+    return this.agendamentosService.findAll(req.user.tenant_slug, req.user, query);
   }
+
 
   @Post()
   async create(@Req() req: any, @Body() body: any) {
@@ -29,6 +30,7 @@ export class AgendamentosController {
 
   @Delete(':id')
   async remove(@Req() req: any, @Param('id') id: string) {
-    return this.agendamentosService.remove(req.user.tenant_slug, parseInt(id, 10));
+    return this.agendamentosService.remove(req.user.tenant_slug, req.user, parseInt(id, 10));
   }
 }
+
