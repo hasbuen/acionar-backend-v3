@@ -10,6 +10,7 @@ import { ClientesModule } from './clientes/clientes.module';
 import { CaixaModule } from './caixa/caixa.module';
 import { EstoqueModule } from './estoque/estoque.module';
 import { ProfissionaisModule } from './profissionais/profissionais.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -25,7 +26,9 @@ import { AppController } from './app.controller';
     CaixaModule,
     EstoqueModule,
     ProfissionaisModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
 })
 export class AppModule {}
+

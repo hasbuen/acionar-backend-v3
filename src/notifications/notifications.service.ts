@@ -1,0 +1,115 @@
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import * as webpush from 'web-push';
+
+@Injectable()
+export class NotificationsService {
+  constructor(private readonly prisma: PrismaService) {
+    if (process.env.VAPID_SUBJECT && process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+      webpush.setVapidDetails(
+        process.env.VAPID_SUBJECT,
+        process.env.VAPID_PUBLIC_KEY,
+        process.env.VAPID_PRIVATE_KEY
+      );
+    }
+  }
+
+  async getPublicKey() {
+    return { publicKey: process.env.VAPID_PUBLIC_KEY || '' };
+  }
+
+  async subscribe(tenantSlug: string, user: any, dto: any) {
+    const { endpoint, p256dh, auth, user_agent, plataforma } = dto;
+    if (!endpoint) throw new BadRequestException('Endpoint is required.');
+
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      await this.prisma.$executeRawUnsafe(
+        `INSERT INTO push_subscriptions (endpoint, p256dh, auth, profissional_id, user_agent, plataforma, ativo, atualizado_em)
+         VALUES ($1, $2, $3, $4, $5, $6, true, NOW())
+         ON CONFLICT (endpoint) 
+         DO UPDATE SET p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, profissional_id = EXCLUDED.profissional_id, ativo = true, atualizado_em = NOW()`,
+        endpoint,
+        p256dh,
+        auth,
+        user.profissional_id,
+        user_agent || null,
+        plataforma || null
+      );
+      return { message: 'Subscribed to push notifications.' };
+    });
+  }
+
+  async unsubscribe(tenantSlug: string, dto: any) {
+    const { endpoint } = dto;
+    if (!endpoint) throw new BadRequestException('Endpoint is required.');
+
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      await this.prisma.$executeRawUnsafe(
+        'UPDATE push_subscriptions SET ativo = false, atualizado_em = NOW() WHERE endpoint = $1',
+        endpoint
+      );
+      return { message: 'Unsubscribed from push notifications.' };
+    });
+  }
+
+  async sendAppointmentPush(tenantSlug: string, appointmentId: number) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const apptRows: any = await this.prisma.$queryRawUnsafe(
+        `SELECT a.*, c.nome as cliente_nome, c.whatsapp as cliente_whatsapp, s.nome as servico_nome
+         FROM agendamentos a
+         LEFT JOIN clientes c ON a.cliente_id = c.id
+         LEFT JOIN servicos s ON a.servico_id = s.id
+         WHERE a.id = $1`,
+        appointmentId
+      );
+      if (!apptRows || apptRows.length === 0) return;
+      const appointment = apptRows[0];
+
+      let subscriptions: any[] = [];
+      if (appointment.profissional_id) {
+        subscriptions = await this.prisma.$queryRawUnsafe(
+          'SELECT * FROM push_subscriptions WHERE profissional_id = $1 AND ativo = true',
+          appointment.profissional_id
+        );
+      } else {
+        subscriptions = await this.prisma.$queryRawUnsafe(
+          'SELECT * FROM push_subscriptions WHERE ativo = true'
+        );
+      }
+
+      if (subscriptions.length === 0) return;
+
+      const payload = JSON.stringify({
+        title: `Novo agendamento: ${appointment.cliente_nome || 'Cliente'}`,
+        body: `Serviço: ${appointment.servico_nome || 'Serviço'}\nData: ${new Date(appointment.data_hora).toLocaleString('pt-BR')}`,
+        url: '/agenda',
+        data: {
+          url: '/agenda',
+          agendamentoId: appointment.id
+        }
+      });
+
+      for (const sub of subscriptions) {
+        if (!sub.endpoint || !sub.p256dh || !sub.auth) continue;
+        try {
+          await webpush.sendNotification({
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.p256dh, auth: sub.auth }
+          }, payload);
+        } catch (error) {
+          console.error('Failed to send web push notification:', error);
+          const statusCode = error.statusCode || 0;
+          if ([401, 403, 404, 410].includes(statusCode)) {
+            await this.prisma.$executeRawUnsafe(
+              'UPDATE push_subscriptions SET ativo = false WHERE id = $1',
+              sub.id
+            );
+          }
+        }
+      }
+    });
+  }
+}

@@ -331,6 +331,28 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         UPDATE subservicos SET profissional_id = (SELECT id FROM profissionais WHERE cargo = 'proprietario' LIMIT 1) WHERE profissional_id IS NULL;
       `);
 
+      await tenantClient.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+          id SERIAL PRIMARY KEY,
+          endpoint TEXT NOT NULL UNIQUE,
+          p256dh TEXT,
+          auth TEXT,
+          profissional_id INT REFERENCES profissionais(id) ON DELETE CASCADE,
+          user_agent TEXT,
+          plataforma TEXT,
+          ativo BOOLEAN NOT NULL DEFAULT true,
+          criado_em TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          atualizado_em TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS idx_push_subscriptions_profissional 
+        ON push_subscriptions (profissional_id) 
+        WHERE ativo = true;
+      `);
+
+
     } catch (err) {
       console.error(`[DATABASE MULTI-TENANT] Falha crítica de migração DDL no banco ${dbName}:`, err.message);
     }

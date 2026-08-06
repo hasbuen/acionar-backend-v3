@@ -1,9 +1,14 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class PublicService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
+
 
   async getTenantPublicInfo(slug: string) {
     const cleanSlug = slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
@@ -136,6 +141,12 @@ export class PublicService {
         endereco_externo || null
       );
 
+      try {
+        await this.notificationsService.sendAppointmentPush(cleanSlug, apptRes[0].id);
+      } catch (err) {
+        console.error('Failed to trigger public appointment push notification:', err);
+      }
+
       return {
         message: 'Appointment requested successfully.',
         agendamento: apptRes[0],
@@ -143,3 +154,4 @@ export class PublicService {
     });
   }
 }
+

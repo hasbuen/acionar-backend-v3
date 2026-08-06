@@ -1,10 +1,14 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 
 @Injectable()
 export class AgendamentosService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async findAll(tenantSlug: string, user: any, query: any) {
     const { data_inicio, data_fim, status, profissional_id } = query;
@@ -75,6 +79,12 @@ export class AgendamentosService {
         endereco_externo || null,
         status || 'agendado'
       );
+
+      try {
+        await this.notificationsService.sendAppointmentPush(tenantSlug, res[0].id);
+      } catch (err) {
+        console.error('Failed to trigger appointment push notification:', err);
+      }
 
       return { agendamento: res[0] };
     });
