@@ -408,7 +408,7 @@ export class CaixaService {
       }
 
       const existing: any = await this.prisma.$queryRawUnsafe(
-        'SELECT profissional_id FROM fluxo_caixa WHERE id = $1',
+        'SELECT profissional_id, agendamento_id FROM fluxo_caixa WHERE id = $1',
         numericId,
       );
       if (!existing || existing.length === 0) {
@@ -417,11 +417,15 @@ export class CaixaService {
       if (existing[0].profissional_id && existing[0].profissional_id !== user.profissional_id) {
         throw new ForbiddenException('Você só pode excluir lançamentos do seu próprio caixa.');
       }
+      if (existing[0].agendamento_id) {
+        throw new BadRequestException(`Este lançamento está vinculado ao agendamento #${existing[0].agendamento_id}. Para removê-lo, exclua ou cancele o agendamento correspondente.`);
+      }
 
       await this.prisma.$queryRawUnsafe(
         'DELETE FROM fluxo_caixa WHERE id = $1',
         numericId,
       );
+
       return { message: 'Lançamento excluído com sucesso.' };
     });
   }
