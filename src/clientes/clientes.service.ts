@@ -32,9 +32,33 @@ export class ClientesService {
 
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const profId = user?.profissional_id || null;
+
+      if (whatsapp && profId) {
+        const cleanWhatsapp = whatsapp.trim();
+        const existing: any = await this.prisma.$queryRawUnsafe(
+          'SELECT * FROM clientes WHERE whatsapp = $1 AND profissional_id = $2 LIMIT 1',
+          cleanWhatsapp,
+          profId,
+        );
+
+        if (existing && existing.length > 0) {
+          const cliente = existing[0];
+          if (cliente.nome !== nome) {
+            const updated: any = await this.prisma.$queryRawUnsafe(
+              'UPDATE clientes SET nome = $1 WHERE id = $2 RETURNING *',
+              nome,
+              cliente.id,
+            );
+            return { cliente: updated[0] };
+          }
+          return { cliente };
+        }
+      }
+
       const res: any = await this.prisma.$queryRawUnsafe(
         'INSERT INTO clientes (profissional_id, nome, whatsapp, email, observacoes) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-        user?.profissional_id || null,
+        profId,
         nome,
         whatsapp || null,
         email || null,
@@ -43,6 +67,7 @@ export class ClientesService {
       return { cliente: res[0] };
     });
   }
+
 
   async update(tenantSlug: string, id: number, dto: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
