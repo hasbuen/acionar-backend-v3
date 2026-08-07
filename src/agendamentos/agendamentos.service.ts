@@ -166,7 +166,15 @@ export class AgendamentosService {
       let targetProfId = finalProfId || user?.profissional_id;
 
       if (!targetProfId) {
-        const profFallback: any = await this.prisma.$queryRawUnsafe('SELECT id FROM profissionais WHERE ativo = true LIMIT 1');
+        const isDom = agendamento.tipo_atendimento === 'domicilio' || agendamento.tipo_atendimento === 'externo' || !!agendamento.endereco_externo;
+        let sqlProf = 'SELECT id FROM profissionais WHERE ativo = true';
+        if (isDom) sqlProf += ' AND aceita_atendimento_externo = true';
+        sqlProf += ' LIMIT 1';
+
+        let profFallback: any = await this.prisma.$queryRawUnsafe(sqlProf);
+        if ((!profFallback || profFallback.length === 0) && isDom) {
+          profFallback = await this.prisma.$queryRawUnsafe('SELECT id FROM profissionais WHERE ativo = true LIMIT 1');
+        }
         if (profFallback && profFallback.length > 0) targetProfId = profFallback[0].id;
       }
 
