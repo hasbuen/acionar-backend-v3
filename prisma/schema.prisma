@@ -102,7 +102,7 @@ model Cliente {
   profissional_id Int?
   nome            String   @db.VarChar(100)
   whatsapp        String?  @db.VarChar(30)
-  email           String?  @db.VarChar(120)
+
   observacoes     String?  @db.VarChar(500)
   created_at      DateTime @default(now()) @db.Timestamptz
 
