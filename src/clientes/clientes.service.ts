@@ -19,10 +19,10 @@ export class ClientesService {
 
       if (profId) {
         params.push(profId);
-        sql += ` AND profissional_id = $${params.length}`;
+        sql += ` AND (profissional_id = $${params.length} OR profissional_id IS NULL)`;
       }
 
-      sql += ' ORDER BY nome ASC';
+      sql += ' ORDER BY id DESC';
 
       const clientes: any = await this.prisma.$queryRawUnsafe(sql, ...params);
       return { clientes };

@@ -63,28 +63,31 @@ export class AgendamentosService {
         let clienteEmail = item.cliente_email;
         let obsFinal = item.observacao;
 
-        if (!clienteNome && item.observacao) {
+        let temp: any = null;
+        if (item.observacao) {
           try {
-            let temp: any = null;
             if (typeof item.observacao === 'object' && item.observacao !== null) {
               temp = item.observacao;
             } else if (typeof item.observacao === 'string') {
               temp = JSON.parse(item.observacao);
             }
-            if (temp && temp.temp_cliente_nome) {
-              clienteNome = temp.temp_cliente_nome;
-              clienteWhatsapp = temp.temp_cliente_whatsapp || clienteWhatsapp;
-              clienteEmail = temp.temp_cliente_email || clienteEmail;
-              obsFinal = temp.observacao_cliente || '';
-            }
           } catch (e) {}
+        }
+
+        const isGenericName = !clienteNome || clienteNome.trim().toLowerCase() === 'cliente' || clienteNome.trim().toLowerCase() === 'cliente não identificado';
+
+        if (isGenericName && temp && temp.temp_cliente_nome) {
+          clienteNome = temp.temp_cliente_nome;
+          clienteWhatsapp = temp.temp_cliente_whatsapp || clienteWhatsapp;
+          clienteEmail = temp.temp_cliente_email || clienteEmail;
+          obsFinal = temp.observacao_cliente || '';
         }
 
         return {
           ...item,
-          cliente_nome: clienteNome || 'Cliente',
-          cliente_whatsapp: clienteWhatsapp || '',
-          cliente_email: clienteEmail || '',
+          cliente_nome: clienteNome || temp?.temp_cliente_nome || 'Cliente',
+          cliente_whatsapp: clienteWhatsapp || temp?.temp_cliente_whatsapp || '',
+          cliente_email: clienteEmail || temp?.temp_cliente_email || '',
           observacao: obsFinal
         };
       });
