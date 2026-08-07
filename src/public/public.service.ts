@@ -23,6 +23,8 @@ export class PublicService {
         cor_primaria: true,
         cor_destaque: true,
         cor_fundo: true,
+        cor_texto_principal: true,
+        cor_texto_secundario: true,
         agenda_publica_ativa: true,
       },
     });

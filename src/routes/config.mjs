@@ -48,7 +48,7 @@ router.get('/public-schedule', authMiddleware, async (req, res) => {
   try {
     const { tenant_slug } = req.user;
     const result = await queryPublic(
-      'SELECT slug, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, agenda_publica_ativa FROM public.tenants WHERE slug = $1',
+      'SELECT slug, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, agenda_publica_ativa FROM public.tenants WHERE slug = $1',
       [tenant_slug]
     );
 
@@ -69,7 +69,7 @@ router.get('/public-schedule', authMiddleware, async (req, res) => {
 router.put('/public-schedule', authMiddleware, async (req, res) => {
   try {
     const { tenant_slug } = req.user;
-    const { agenda_publica_ativa, foto_url, cor_primaria, cor_destaque, cor_fundo, novo_slug, nome_empresa } = req.body;
+    const { agenda_publica_ativa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, novo_slug, nome_empresa } = req.body;
 
     const current = await queryPublic('SELECT agenda_publica_ativa, nome_empresa FROM public.tenants WHERE slug = $1', [tenant_slug]);
     if (current.rows.length === 0) {
@@ -103,17 +103,21 @@ router.put('/public-schedule', authMiddleware, async (req, res) => {
            cor_primaria = COALESCE($3, cor_primaria),
            cor_destaque = COALESCE($4, cor_destaque),
            cor_fundo = COALESCE($5, cor_fundo),
-           slug = $6,
-           nome_empresa = COALESCE($7, nome_empresa),
+           cor_texto_principal = COALESCE($6, cor_texto_principal),
+           cor_texto_secundario = COALESCE($7, cor_texto_secundario),
+           slug = $8,
+           nome_empresa = COALESCE($9, nome_empresa),
            updated_at = NOW()
-       WHERE slug = $8
-       RETURNING slug, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, agenda_publica_ativa`,
+       WHERE slug = $10
+       RETURNING slug, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, agenda_publica_ativa`,
       [
         agenda_publica_ativa,
         foto_url,
         cor_primaria,
         cor_destaque,
         cor_fundo,
+        cor_texto_principal,
+        cor_texto_secundario,
         targetSlug,
         nome_empresa !== undefined && isAtiva ? String(nome_empresa).trim() : null,
         tenant_slug

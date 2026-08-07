@@ -19,6 +19,8 @@ export async function initPublicSchema() {
         cor_primaria VARCHAR(10) DEFAULT '#0d9488',
         cor_destaque VARCHAR(10) DEFAULT '#f59e0b',
         cor_fundo VARCHAR(10) DEFAULT '#0f172a',
+        cor_texto_principal VARCHAR(10) DEFAULT '#ffffff',
+        cor_texto_secundario VARCHAR(10) DEFAULT '#94a3b8',
         agenda_publica_ativa BOOLEAN DEFAULT true,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

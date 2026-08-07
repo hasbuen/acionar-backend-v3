@@ -25,6 +25,8 @@ model Tenant {
   cor_primaria          String   @default("#0d9488") @db.VarChar(10)
   cor_destaque          String   @default("#f59e0b") @db.VarChar(10)
   cor_fundo             String   @default("#0f172a") @db.VarChar(10)
+  cor_texto_principal   String   @default("#ffffff") @db.VarChar(10)
+  cor_texto_secundario  String   @default("#94a3b8") @db.VarChar(10)
   agenda_publica_ativa  Boolean  @default(true)
   created_at            DateTime @default(now()) @db.Timestamptz
   updated_at            DateTime @default(now()) @updatedAt @db.Timestamptz

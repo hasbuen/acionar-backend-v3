@@ -9,9 +9,9 @@ const router = express.Router();
 /**
  * POST /api/auth/register-tenant
  */
-router.post('/register-tenant', async (req, res) => {
+router.post('/register', async (req, res) => {
   try {
-    const { slug, nome_empresa, email_proprietario, senha, telefone, foto_url, cor_primaria } = req.body;
+    const { slug, nome_empresa, email_proprietario, senha, telefone, foto_url, cor_primaria, cor_texto_principal, cor_texto_secundario } = req.body;
 
     if (!slug || !nome_empresa || !email_proprietario || !senha) {
       return res.status(400).json({ error: 'Missing required registration fields.' });
@@ -30,9 +30,9 @@ router.post('/register-tenant', async (req, res) => {
 
     // Insert tenant in public
     const tenantRes = await queryPublic(
-      `INSERT INTO public.tenants (slug, nome_empresa, email_proprietario, telefone, senha_hash, foto_url, cor_primaria)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [cleanSlug, nome_empresa, email_proprietario, telefone || null, senha_hash, foto_url || null, cor_primaria || '#0d9488']
+      `INSERT INTO public.tenants (slug, nome_empresa, email_proprietario, telefone, senha_hash, foto_url, cor_primaria, cor_texto_principal, cor_texto_secundario)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, slug, nome_empresa`,
+      [cleanSlug, nome_empresa, email_proprietario, telefone || null, senha_hash, foto_url || null, cor_primaria || '#0d9488', cor_texto_principal || '#ffffff', cor_texto_secundario || '#94a3b8']
     );
 
     const newTenant = tenantRes.rows[0];

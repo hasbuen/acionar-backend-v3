@@ -11,7 +11,7 @@ export class AuthService {
   ) {}
 
   async registerTenant(dto: any) {
-    const { slug, nome_empresa, email_proprietario, senha, telefone, foto_url, cor_primaria } = dto;
+    const { slug, nome_empresa, email_proprietario, senha, telefone, foto_url, cor_primaria, cor_texto_principal, cor_texto_secundario } = dto;
     const cleanSlug = (slug || '').toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
 
     const existing = await this.prisma.tenant.findUnique({ where: { slug: cleanSlug } });
@@ -31,6 +31,8 @@ export class AuthService {
         senha_hash,
         foto_url: foto_url || null,
         cor_primaria: cor_primaria || '#0d9488',
+        cor_texto_principal: cor_texto_principal || '#ffffff',
+        cor_texto_secundario: cor_texto_secundario || '#94a3b8',
       },
     });
 

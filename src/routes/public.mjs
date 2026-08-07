@@ -12,7 +12,7 @@ router.get('/tenant/:slug', async (req, res) => {
   try {
     const slug = req.params.slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
     const result = await queryPublic(
-      'SELECT slug, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, agenda_publica_ativa FROM public.tenants WHERE slug = $1',
+      'SELECT slug, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, agenda_publica_ativa FROM public.tenants WHERE slug = $1',
       [slug]
     );
 

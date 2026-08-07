@@ -40,6 +40,8 @@ export class ConfigService {
         cor_primaria: true,
         cor_destaque: true,
         cor_fundo: true,
+        cor_texto_principal: true,
+        cor_texto_secundario: true,
         agenda_publica_ativa: true,
       },
     });
@@ -49,7 +51,7 @@ export class ConfigService {
   }
 
   async updatePublicScheduleConfig(tenantSlug: string, dto: any) {
-    const { agenda_publica_ativa, foto_url, cor_primaria, cor_destaque, cor_fundo, novo_slug, nome_empresa } = dto;
+    const { agenda_publica_ativa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, novo_slug, nome_empresa } = dto;
     let targetSlug = tenantSlug;
 
     const currentTenant = await this.prisma.tenant.findUnique({ where: { slug: tenantSlug } });
@@ -84,6 +86,8 @@ export class ConfigService {
         cor_primaria: cor_primaria || undefined,
         cor_destaque: cor_destaque || undefined,
         cor_fundo: cor_fundo || undefined,
+        cor_texto_principal: cor_texto_principal || undefined,
+        cor_texto_secundario: cor_texto_secundario || undefined,
       },
       select: {
         slug: true,
@@ -92,6 +96,8 @@ export class ConfigService {
         cor_primaria: true,
         cor_destaque: true,
         cor_fundo: true,
+        cor_texto_principal: true,
+        cor_texto_secundario: true,
         agenda_publica_ativa: true,
       },
     });

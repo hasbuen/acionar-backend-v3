@@ -20,7 +20,7 @@ export async function tenantMiddleware(req, res, next) {
 
     if (!tenant) {
       const result = await queryPublic(
-        'SELECT id, slug, nome_empresa, email_proprietario, status, foto_url, cor_primaria, cor_destaque, cor_fundo, agenda_publica_ativa FROM public.tenants WHERE slug = $1',
+        'SELECT id, slug, nome_empresa, email_proprietario, status, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, agenda_publica_ativa FROM public.tenants WHERE slug = $1',
         [slug]
       );
 
