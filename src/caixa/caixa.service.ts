@@ -343,23 +343,38 @@ export class CaixaService {
         }
       }
 
-      // 2. Registra o fluxo de caixa
-      const res: any = await this.prisma.$queryRawUnsafe(
-        `INSERT INTO fluxo_caixa (
-          agendamento_id, profissional_id, cliente_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date) RETURNING *`,
-        agendamento_id || null,
-        user.profissional_id || null,
-        cliente_id ? parseInt(cliente_id, 10) : null,
-        tipo,
-        categoria || null,
-        descricao,
-        valor,
-        status || 'pago',
-        forma_pagamento || 'pix',
-        data_movimento || new Date().toISOString().split('T')[0],
-      );
-      return { movimentacao: res[0] };
+      // 2. Registra o fluxo de caixa (com suporte a múltiplos meses recorrentes se informado)
+      const numMeses = dto.qtd_meses ? Math.min(Math.max(parseInt(dto.qtd_meses, 10), 1), 24) : 1;
+      const baseDateStr = data_movimento || new Date().toISOString().split('T')[0];
+      const baseDate = new Date(`${baseDateStr}T12:00:00Z`);
+
+      const createdEntries = [];
+      for (let i = 0; i < numMeses; i++) {
+        const itemDate = new Date(baseDate);
+        itemDate.setMonth(baseDate.getMonth() + i);
+        const itemDateStr = itemDate.toISOString().split('T')[0];
+
+        const descFinal = numMeses > 1 ? `${descricao} (${i + 1}/${numMeses})` : descricao;
+
+        const res: any = await this.prisma.$queryRawUnsafe(
+          `INSERT INTO fluxo_caixa (
+            agendamento_id, profissional_id, cliente_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date) RETURNING *`,
+          agendamento_id || null,
+          user.profissional_id || null,
+          cliente_id ? parseInt(cliente_id, 10) : null,
+          tipo,
+          categoria || null,
+          descFinal,
+          valor,
+          status || 'pago',
+          forma_pagamento || 'pix',
+          itemDateStr,
+        );
+        createdEntries.push(res[0]);
+      }
+
+      return { movimentacao: createdEntries[0], totalCriados: createdEntries.length };
     });
   }
 
