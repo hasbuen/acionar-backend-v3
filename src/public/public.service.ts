@@ -75,10 +75,10 @@ export class PublicService {
 
     await this.prisma.ensureTenantSchema(cleanSlug);
 
+    const cliente_nome = dto.cliente_nome || dto.nome || dto.clientName;
+    const cliente_whatsapp = dto.cliente_whatsapp || dto.whatsapp || dto.telefone || dto.phone;
+    const cliente_email = dto.cliente_email || dto.email || null;
     const {
-      cliente_nome,
-      cliente_whatsapp,
-      cliente_email,
       profissional_id,
       servico_id,
       subservico_id,
@@ -114,22 +114,115 @@ export class PublicService {
         }
       }
 
-      // Encapsulate temporary customer details in JSON within the observation column
-      const observationJson = JSON.stringify({
-        temp_cliente_nome: cliente_nome,
-        temp_cliente_whatsapp: cliente_whatsapp,
-        temp_cliente_email: cliente_email || null,
-        observacao_cliente: observacao || ''
-      });
+      // 1.5 Auto-create or find client in `clientes` table immediately
+      let clienteIdFinal = null;
+      try {
+        const rawPhone = String(cliente_whatsapp || '').replace(/\D/g, '');
+        const phoneWith55 = rawPhone ? (rawPhone.startsWith('55') ? rawPhone : `55${rawPhone}`) : '';
+        const phoneWithout55 = rawPhone ? (rawPhone.startsWith('55') ? rawPhone.slice(2) : rawPhone) : '';
 
-      // 2. Create appointment with NULL cliente_id
+        let targetProfId = profissional_id;
+        if (!targetProfId) {
+          const isDom = tipo_atendimento === 'domicilio' || tipo_atendimento === 'externo' || !!endereco_externo;
+          let sqlProf = 'SELECT id FROM profissionais WHERE ativo = true';
+          if (isDom) sqlProf += ' AND aceita_atendimento_externo = true';
+          sqlProf += ' LIMIT 1';
+
+          let profFallback: any = await this.prisma.$queryRawUnsafe(sqlProf);
+          if ((!profFallback || profFallback.length === 0) && isDom) {
+            profFallback = await this.prisma.$queryRawUnsafe('SELECT id FROM profissionais WHERE ativo = true LIMIT 1');
+          }
+          if (profFallback && profFallback.length > 0) targetProfId = profFallback[0].id;
+        }
+
+        let ruaVal = null, numeroVal = null, bairroVal = null, complementoVal = null;
+        if (endereco_externo) {
+          if (typeof endereco_externo === 'object') {
+            ruaVal = endereco_externo.rua || null;
+            numeroVal = endereco_externo.numero || null;
+            bairroVal = endereco_externo.bairro || null;
+            complementoVal = endereco_externo.complemento || null;
+          } else if (typeof endereco_externo === 'string') {
+            try {
+              const parsedEnd = JSON.parse(endereco_externo);
+              ruaVal = parsedEnd.rua || null;
+              numeroVal = parsedEnd.numero || null;
+              bairroVal = parsedEnd.bairro || null;
+              complementoVal = parsedEnd.complemento || null;
+            } catch (e) {}
+          }
+        }
+
+        let clientQuery: any[] = [];
+        if (phoneWith55 || phoneWithout55) {
+          clientQuery = await this.prisma.$queryRawUnsafe(
+            'SELECT id FROM clientes WHERE whatsapp = $1 OR whatsapp = $2 OR whatsapp = $3 LIMIT 1',
+            phoneWith55,
+            phoneWithout55,
+            rawPhone
+          );
+        }
+
+        if (clientQuery && clientQuery.length > 0) {
+          clienteIdFinal = clientQuery[0].id;
+          await this.prisma.$executeRawUnsafe(
+            `UPDATE clientes 
+             SET nome = $1, 
+                 email = COALESCE($2, email), 
+                 rua = COALESCE($3, rua),
+                 numero = COALESCE($4, numero),
+                 bairro = COALESCE($5, bairro),
+                 complemento = COALESCE($6, complemento)
+             WHERE id = $7`,
+            cliente_nome,
+            cliente_email || null,
+            ruaVal, numeroVal, bairroVal, complementoVal,
+            clienteIdFinal
+          );
+        } else {
+          try {
+            const clientInsert: any = await this.prisma.$queryRawUnsafe(
+              `INSERT INTO clientes (profissional_id, nome, whatsapp, email, rua, numero, bairro, complemento)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               RETURNING id`,
+              targetProfId || null,
+              cliente_nome,
+              phoneWith55 || rawPhone || null,
+              cliente_email || null,
+              ruaVal, numeroVal, bairroVal, complementoVal
+            );
+            clienteIdFinal = clientInsert[0].id;
+          } catch (eIns) {
+            const retryQuery: any = await this.prisma.$queryRawUnsafe(
+              'SELECT id FROM clientes WHERE whatsapp = $1 OR whatsapp = $2 LIMIT 1',
+              phoneWith55,
+              phoneWithout55
+            );
+            if (retryQuery && retryQuery.length > 0) clienteIdFinal = retryQuery[0].id;
+          }
+        }
+      } catch (eClientCreate) {
+        console.error('[IMMEDIATE CLIENT CREATION ERROR]', eClientCreate);
+      }
+
+      // Encapsulate customer details in JSON within the observation column for extra safety
+      const observationJson = typeof observacao === 'string' && observacao.trim().startsWith('{')
+        ? observacao
+        : JSON.stringify({
+            temp_cliente_nome: cliente_nome,
+            temp_cliente_whatsapp: cliente_whatsapp,
+            temp_cliente_email: cliente_email || null,
+            observacao_cliente: observacao || ''
+          });
+
+      // 2. Create appointment with linked cliente_id
       const apptRes: any = await this.prisma.$queryRawUnsafe(
         `INSERT INTO agendamentos (
           cliente_id, profissional_id, servico_id, subservico_id, data_hora,
           duracao_total_minutos, valor_total, status, observacao, tipo_atendimento, endereco_externo
         ) VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, 'aguardando_confirmacao', $8, $9, $10)
         RETURNING *`,
-        null, // Defer formal client creation
+        clienteIdFinal,
         profissional_id || null,
         servico_id,
         subservico_id || null,
