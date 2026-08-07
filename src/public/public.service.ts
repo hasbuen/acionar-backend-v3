@@ -168,28 +168,22 @@ export class PublicService {
           await this.prisma.$executeRawUnsafe(
             `UPDATE clientes 
              SET nome = $1, 
-                 email = COALESCE($2, email), 
-                 rua = COALESCE($3, rua),
-                 numero = COALESCE($4, numero),
-                 bairro = COALESCE($5, bairro),
-                 complemento = COALESCE($6, complemento)
-             WHERE id = $7`,
+                 email = COALESCE($2, email)
+             WHERE id = $3`,
             cliente_nome,
             cliente_email || null,
-            ruaVal, numeroVal, bairroVal, complementoVal,
             clienteIdFinal
           );
         } else {
           try {
             const clientInsert: any = await this.prisma.$queryRawUnsafe(
-              `INSERT INTO clientes (profissional_id, nome, whatsapp, email, rua, numero, bairro, complemento)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              `INSERT INTO clientes (profissional_id, nome, whatsapp, email)
+               VALUES ($1, $2, $3, $4)
                RETURNING id`,
               targetProfId || null,
               cliente_nome,
               phoneWith55 || rawPhone || null,
-              cliente_email || null,
-              ruaVal, numeroVal, bairroVal, complementoVal
+              cliente_email || null
             );
             clienteIdFinal = clientInsert[0].id;
           } catch (eIns) {
@@ -479,18 +473,10 @@ export class PublicService {
               await this.prisma.$executeRawUnsafe(
                 `UPDATE clientes 
                  SET nome = $1, 
-                     email = COALESCE($2, email), 
-                     rua = COALESCE($3, rua),
-                     numero = COALESCE($4, numero),
-                     bairro = COALESCE($5, bairro),
-                     complemento = COALESCE($6, complemento)
-                 WHERE id = $7`,
+                     email = COALESCE($2, email)
+                 WHERE id = $3`,
                 nomeFinal,
                 tempClientData?.temp_cliente_email || null,
-                ruaVal || null,
-                numeroVal || null,
-                bairroVal || null,
-                complementoVal || null,
                 newClienteId
               );
             } else {
@@ -502,17 +488,13 @@ export class PublicService {
 
               try {
                 const clientInsert: any = await this.prisma.$queryRawUnsafe(
-                  `INSERT INTO clientes (profissional_id, nome, whatsapp, email, rua, numero, bairro, complemento)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                  `INSERT INTO clientes (profissional_id, nome, whatsapp, email)
+                   VALUES ($1, $2, $3, $4)
                    RETURNING id`,
                   targetProfId || null,
                   nomeFinal,
                   phoneWith55 || rawPhone || null,
-                  tempClientData?.temp_cliente_email || null,
-                  ruaVal || null,
-                  numeroVal || null,
-                  bairroVal || null,
-                  complementoVal || null
+                  tempClientData?.temp_cliente_email || null
                 );
                 newClienteId = clientInsert[0].id;
               } catch (eIns) {
