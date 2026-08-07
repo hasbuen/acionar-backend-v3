@@ -361,11 +361,17 @@ export class PublicService {
               }
             }
 
+            const rawPhone = String(whatsappClean || '').replace(/\D/g, '');
+            const phoneWith55 = rawPhone ? (rawPhone.startsWith('55') ? rawPhone : `55${rawPhone}`) : '';
+            const phoneWithout55 = rawPhone ? (rawPhone.startsWith('55') ? rawPhone.slice(2) : rawPhone) : '';
+
             let clientQuery: any[] = [];
-            if (whatsappClean) {
+            if (phoneWith55 || phoneWithout55) {
               clientQuery = await this.prisma.$queryRawUnsafe(
-                'SELECT id FROM clientes WHERE whatsapp = $1 LIMIT 1',
-                whatsappClean
+                'SELECT id FROM clientes WHERE whatsapp = $1 OR whatsapp = $2 OR whatsapp = $3 LIMIT 1',
+                phoneWith55,
+                phoneWithout55,
+                rawPhone
               );
             }
 
@@ -395,20 +401,31 @@ export class PublicService {
                 if (profFallback && profFallback.length > 0) targetProfId = profFallback[0].id;
               }
 
-              const clientInsert: any = await this.prisma.$queryRawUnsafe(
-                `INSERT INTO clientes (profissional_id, nome, whatsapp, email, rua, numero, bairro, complemento)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 RETURNING id`,
-                targetProfId || null,
-                nomeFinal,
-                whatsappClean || null,
-                tempClientData?.temp_cliente_email || null,
-                ruaVal || null,
-                numeroVal || null,
-                bairroVal || null,
-                complementoVal || null
-              );
-              newClienteId = clientInsert[0].id;
+              try {
+                const clientInsert: any = await this.prisma.$queryRawUnsafe(
+                  `INSERT INTO clientes (profissional_id, nome, whatsapp, email, rua, numero, bairro, complemento)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                   RETURNING id`,
+                  targetProfId || null,
+                  nomeFinal,
+                  phoneWith55 || rawPhone || null,
+                  tempClientData?.temp_cliente_email || null,
+                  ruaVal || null,
+                  numeroVal || null,
+                  bairroVal || null,
+                  complementoVal || null
+                );
+                newClienteId = clientInsert[0].id;
+              } catch (eIns) {
+                const retryQuery: any = await this.prisma.$queryRawUnsafe(
+                  'SELECT id FROM clientes WHERE whatsapp = $1 OR whatsapp = $2 LIMIT 1',
+                  phoneWith55,
+                  phoneWithout55
+                );
+                if (retryQuery && retryQuery.length > 0) {
+                  newClienteId = retryQuery[0].id;
+                }
+              }
             }
           }
         } catch (eClient) {
