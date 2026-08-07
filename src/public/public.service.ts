@@ -185,8 +185,14 @@ export class PublicService {
           targetProfs = [{ id: profissional_id }];
         } else if (tipo_atendimento === 'domicilio') {
           targetProfs = profsAptos.filter((p: any) => p.aceita_atendimento_externo === true || String(p.aceita_atendimento_externo) === 'true');
+          if (targetProfs.length === 0) targetProfs = profsAptos;
         } else {
           targetProfs = profsAptos;
+        }
+
+        if (!targetProfs || targetProfs.length === 0) {
+          const allProfs: any = await this.prisma.$queryRawUnsafe('SELECT id FROM profissionais WHERE ativo = true');
+          targetProfs = allProfs || [];
         }
 
         for (const p of targetProfs) {

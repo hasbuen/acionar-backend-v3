@@ -132,7 +132,7 @@ export class NotificationsService {
             appointment.profissional_id
           );
         } else if (isDomicilio) {
-          // Se for agendamento a domicílio, enviar APENAS para os profissionais habilitados a atender a domicílio
+          // Se for agendamento a domicílio, tenta enviar para os profissionais habilitados a atender a domicílio
           subscriptions = await this.prisma.$queryRawUnsafe(
             `SELECT DISTINCT s.* 
              FROM push_subscriptions s
@@ -140,6 +140,13 @@ export class NotificationsService {
              WHERE (s.ativo = true OR s.ativo IS NULL)
                AND (p.aceita_atendimento_externo = true OR s.profissional_id IS NULL)`
           );
+
+          // Fallback de Segurança: Se nenhum dispositivo for filtrado especificamente, envia para todos os dispositivos ativos
+          if (!subscriptions || subscriptions.length === 0) {
+            subscriptions = await this.prisma.$queryRawUnsafe(
+              'SELECT * FROM push_subscriptions WHERE (ativo = true OR ativo IS NULL)'
+            );
+          }
         } else {
           // Se for agendamento no estabelecimento, enviar para todos os dispositivos do tenant
           subscriptions = await this.prisma.$queryRawUnsafe(
