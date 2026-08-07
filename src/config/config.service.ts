@@ -158,9 +158,15 @@ export class ConfigService {
     });
   }
 
+  private getUploadsDir(): string {
+    if (process.env.UPLOADS_DIR) return process.env.UPLOADS_DIR;
+    if (fs.existsSync('/var/www/acionar-v3/uploads')) return '/var/www/acionar-v3/uploads';
+    return path.join(process.cwd(), 'uploads');
+  }
+
   async uploadLogo(tenantSlug: string, imageBase64: string) {
     const cleanSlug = tenantSlug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
-    const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+    const uploadsDir = this.getUploadsDir();
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
@@ -201,7 +207,7 @@ export class ConfigService {
     }
 
     const cleanSlug = tenantSlug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
-    const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+    const uploadsDir = this.getUploadsDir();
     const targetDir = path.join(uploadsDir, type);
 
     if (!fs.existsSync(targetDir)) {

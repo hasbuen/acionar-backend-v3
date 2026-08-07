@@ -50,6 +50,7 @@ export class AuthService {
     const token = this.jwtService.sign({
       tenant_slug: cleanSlug,
       profissional_id: owner.id,
+      nome: owner.nome,
       email: owner.email,
       cargo: owner.cargo,
     });
@@ -140,6 +141,7 @@ export class AuthService {
     const token = this.jwtService.sign({
       tenant_slug: cleanSlug,
       profissional_id: user.id,
+      nome: user.nome,
       email: user.email,
       cargo: user.cargo,
     });

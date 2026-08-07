@@ -227,7 +227,13 @@ export class EstoqueService {
       }
 
       // Notification
-      const nomeRemetente = user?.nome || 'Um colega';
+      let nomeRemetente = user?.nome;
+      if (!nomeRemetente && user?.profissional_id) {
+        const senderRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM profissionais WHERE id = $1', user.profissional_id);
+        if (senderRes && senderRes.length > 0) nomeRemetente = senderRes[0].nome;
+      }
+      if (!nomeRemetente) nomeRemetente = 'Um colega';
+
       const titulo = 'Transferência de Estoque';
       const mensagem = `O usuário ${nomeRemetente} transferiu ${qtyNum} unidades do produto ${produtoOrigem.nome} para o seu estoque.`;
 

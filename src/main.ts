@@ -10,7 +10,8 @@ import * as path from 'path';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+  const fs = require('fs');
+  const uploadsDir = process.env.UPLOADS_DIR || (fs.existsSync('/var/www/acionar-v3/uploads') ? '/var/www/acionar-v3/uploads' : path.join(process.cwd(), 'uploads'));
   app.use('/uploads', express.static(uploadsDir));
 
   app.use(json({ limit: '10mb' }));

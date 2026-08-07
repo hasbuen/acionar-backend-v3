@@ -260,16 +260,33 @@ export class AgendamentosService {
 
       // Notification for transfer
       if (finalProfId && finalProfId !== agendamento.profissional_id && finalProfId !== user?.profissional_id) {
-        const nomeRemetente = user?.nome || 'Um colega';
-        let clienteNome = 'um cliente';
+        let nomeRemetente = user?.nome;
+        if (!nomeRemetente && user?.profissional_id) {
+          const senderRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM profissionais WHERE id = $1', user.profissional_id);
+          if (senderRes && senderRes.length > 0) nomeRemetente = senderRes[0].nome;
+        }
+        if (!nomeRemetente) nomeRemetente = 'Um colega';
+
+        let clienteNome = '';
         if (finalClienteId) {
           const cRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM clientes WHERE id = $1', finalClienteId);
           if (cRes && cRes.length > 0) clienteNome = cRes[0].nome;
         }
-        
+        if (!clienteNome && agendamento.cliente_id) {
+          const cRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM clientes WHERE id = $1', agendamento.cliente_id);
+          if (cRes && cRes.length > 0) clienteNome = cRes[0].nome;
+        }
+        if (!clienteNome && agendamento.observacao && agendamento.observacao.startsWith('{"temp_cliente_nome"')) {
+          try {
+            const temp = JSON.parse(agendamento.observacao);
+            clienteNome = temp.temp_cliente_nome;
+          } catch (e) {}
+        }
+        if (!clienteNome) clienteNome = 'Cliente';
+
         const titulo = 'Agendamento Recebido';
-        const mensagem = `O usuário ${nomeRemetente} transferiu um agendamento com o cliente ${clienteNome} para a sua agenda.`;
-        
+        const mensagem = `O usuário ${nomeRemetente} transferiu o agendamento do cliente ${clienteNome} para a sua agenda.`;
+
         const insertedNotif: any = await this.prisma.$queryRawUnsafe(
           `INSERT INTO notificacoes (profissional_id, titulo, mensagem) VALUES ($1, $2, $3) RETURNING id, titulo, mensagem, lida, created_at`,
           finalProfId, titulo, mensagem
@@ -291,17 +308,27 @@ export class AgendamentosService {
 
       if (wasPending && isAccepted) {
         try {
-          let clientName = 'Cliente';
+          let clientName = '';
           if (updatedAg.cliente_id) {
             const clRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM clientes WHERE id = $1', updatedAg.cliente_id);
             if (clRes && clRes.length > 0) clientName = clRes[0].nome;
-          } else if (agendamento.observacao && agendamento.observacao.startsWith('{"temp_cliente_nome"')) {
-            const temp = JSON.parse(agendamento.observacao);
-            clientName = temp.temp_cliente_nome;
           }
+          if (!clientName && agendamento.observacao && agendamento.observacao.startsWith('{"temp_cliente_nome"')) {
+            try {
+              const temp = JSON.parse(agendamento.observacao);
+              clientName = temp.temp_cliente_nome;
+            } catch (e) {}
+          }
+          if (!clientName) clientName = 'Cliente';
 
-          const profName = user?.nome || 'Profissional';
-          const msgText = `${profName} aceitou o agendamento de ${clientName}.`;
+          let profName = user?.nome;
+          if (!profName && user?.profissional_id) {
+            const profRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM profissionais WHERE id = $1', user.profissional_id);
+            if (profRes && profRes.length > 0) profName = profRes[0].nome;
+          }
+          if (!profName) profName = 'Profissional';
+
+          const msgText = `O usuário ${profName} aceitou o agendamento do cliente ${clientName}.`;
 
           // Notificar todos os outros profissionais ativos
           const others: any = await this.prisma.$queryRawUnsafe('SELECT id FROM profissionais WHERE ativo = true AND id <> $1', user?.profissional_id || 0);

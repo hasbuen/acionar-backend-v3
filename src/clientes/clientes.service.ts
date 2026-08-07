@@ -107,7 +107,13 @@ export class ClientesService {
       if (!res || res.length === 0) throw new NotFoundException('Cliente não encontrado.');
       
       const cliente = res[0];
-      const nomeRemetente = user?.nome || 'Um colega';
+      let nomeRemetente = user?.nome;
+      if (!nomeRemetente && user?.profissional_id) {
+        const senderRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM profissionais WHERE id = $1', user.profissional_id);
+        if (senderRes && senderRes.length > 0) nomeRemetente = senderRes[0].nome;
+      }
+      if (!nomeRemetente) nomeRemetente = 'Um colega';
+
       const titulo = 'Cliente Transferido';
       const mensagem = `O usuário ${nomeRemetente} transferiu o cadastro do cliente ${cliente.nome} para você.`;
 
