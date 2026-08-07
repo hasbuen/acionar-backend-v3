@@ -38,14 +38,15 @@ export class CaixaService {
 
       // ─── 1. Busca lançamentos reais de fluxo_caixa ────────────────────
       let sqlFC =
-        `SELECT fc.id::text as id, fc.agendamento_id, fc.profissional_id,
+        `SELECT fc.id::text as id, fc.agendamento_id, fc.profissional_id, fc.cliente_id,
                 fc.tipo, fc.categoria, fc.descricao, fc.valor, fc.status,
                 fc.forma_pagamento, fc.data_movimento,
-                c.nome as cliente_nome, s.nome as servico_nome,
+                COALESCE(c_direct.nome, c.nome) as cliente_nome, s.nome as servico_nome,
                 'fluxo_caixa' as origem
          FROM fluxo_caixa fc
          LEFT JOIN agendamentos a ON fc.agendamento_id = a.id
          LEFT JOIN clientes c ON a.cliente_id = c.id
+         LEFT JOIN clientes c_direct ON fc.cliente_id = c_direct.id
          LEFT JOIN servicos s ON a.servico_id = s.id
          WHERE (fc.categoria IS NULL OR fc.categoria <> 'ignorado')
            AND (fc.status IS NULL OR fc.status <> 'cancelado')`;
@@ -281,19 +282,59 @@ export class CaixaService {
   }
 
   async create(tenantSlug: string, user: any, dto: any) {
-    const { agendamento_id, tipo, descricao, valor, status, forma_pagamento, data_movimento, categoria } = dto;
+    const {
+      agendamento_id,
+      tipo,
+      descricao,
+      valor,
+      status,
+      forma_pagamento,
+      data_movimento,
+      categoria,
+      cliente_id,
+      produto_id,
+      quantidade_produto,
+    } = dto;
+
     if (!tipo || !descricao || valor === undefined) {
       throw new BadRequestException('Tipo, descrição e valor são obrigatórios.');
     }
 
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      // 1. Se for compra de mercadoria, atualiza o estoque e registra movimentação
+      if (tipo === 'saida' && categoria === 'compra_mercadoria' && produto_id) {
+        const qty = parseInt(quantidade_produto, 10);
+        if (isNaN(qty) || qty <= 0) {
+          throw new BadRequestException('Quantidade do produto inválida.');
+        }
+
+        // Incrementa o produto no estoque
+        await this.prisma.$executeRawUnsafe(
+          'UPDATE estoque_produtos SET quantidade = quantidade + $1 WHERE id = $2',
+          qty,
+          parseInt(produto_id, 10)
+        );
+
+        // Registra a movimentação de entrada no estoque
+        await this.prisma.$executeRawUnsafe(
+          `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
+           VALUES ($1, $2, 'entrada', $3, $4)`,
+          parseInt(produto_id, 10),
+          user.profissional_id || null,
+          qty,
+          `Compra de mercadoria lançada direto no Caixa: ${descricao}`
+        );
+      }
+
+      // 2. Registra o fluxo de caixa
       const res: any = await this.prisma.$queryRawUnsafe(
         `INSERT INTO fluxo_caixa (
-          agendamento_id, profissional_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date) RETURNING *`,
+          agendamento_id, profissional_id, cliente_id, tipo, categoria, descricao, valor, status, forma_pagamento, data_movimento
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date) RETURNING *`,
         agendamento_id || null,
         user.profissional_id || null,
+        cliente_id ? parseInt(cliente_id, 10) : null,
         tipo,
         categoria || null,
         descricao,

@@ -223,6 +223,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           id SERIAL PRIMARY KEY,
           agendamento_id INT REFERENCES agendamentos(id) ON DELETE SET NULL,
           profissional_id INT REFERENCES profissionais(id) ON DELETE SET NULL,
+          cliente_id INT REFERENCES clientes(id) ON DELETE SET NULL,
           tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('entrada', 'saida')),
           categoria VARCHAR(50) DEFAULT NULL,
           descricao VARCHAR(255) NOT NULL,
@@ -234,9 +235,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         );
       `);
 
-      // Migração segura: adiciona coluna categoria em bancos já existentes
+      // Migração segura: adiciona colunas em bancos já existentes
       await tenantClient.$executeRawUnsafe(`
         ALTER TABLE fluxo_caixa ADD COLUMN IF NOT EXISTS categoria VARCHAR(50) DEFAULT NULL;
+      `);
+      await tenantClient.$executeRawUnsafe(`
+        ALTER TABLE fluxo_caixa ADD COLUMN IF NOT EXISTS cliente_id INT REFERENCES clientes(id) ON DELETE SET NULL;
       `);
 
       await tenantClient.$executeRawUnsafe(`

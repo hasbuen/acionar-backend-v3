@@ -95,14 +95,17 @@ model Subservico {
 }
 
 model Cliente {
-  id          Int      @id @default(autoincrement())
-  nome        String   @db.VarChar(100)
-  whatsapp    String?  @db.VarChar(30)
-  email       String?  @db.VarChar(120)
-  observacoes String?
-  created_at  DateTime @default(now()) @db.Timestamptz
+  id              Int      @id @default(autoincrement())
+  profissional_id Int?
+  nome            String   @db.VarChar(100)
+  whatsapp        String?  @db.VarChar(30)
+  email           String?  @db.VarChar(120)
+  observacoes     String?  @db.VarChar(500)
+  created_at      DateTime @default(now()) @db.Timestamptz
 
+  profissional Profissional? @relation(fields: [profissional_id], references: [id], onDelete: SetNull)
   agendamentos Agendamento[]
+  fluxos_caixa FluxoCaixa[]
 
   @@map("clientes")
   @@schema("tenant")
@@ -139,6 +142,7 @@ model FluxoCaixa {
   id              Int      @id @default(autoincrement())
   agendamento_id  Int?
   profissional_id Int?
+  cliente_id      Int?
   tipo            String   @db.VarChar(20)
   categoria       String   @default("servico") @db.VarChar(50)
   descricao       String   @db.VarChar(255)
@@ -150,6 +154,7 @@ model FluxoCaixa {
 
   agendamento  Agendamento?  @relation(fields: [agendamento_id], references: [id], onDelete: SetNull)
   profissional Profissional? @relation(fields: [profissional_id], references: [id], onDelete: SetNull)
+  cliente      Cliente?      @relation(fields: [cliente_id], references: [id], onDelete: SetNull)
 
   @@map("fluxo_caixa")
   @@schema("tenant")
