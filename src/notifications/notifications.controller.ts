@@ -26,6 +26,7 @@ export class NotificationsController {
   @Get()
   @UseGuards(JwtAuthGuard)
   async findAll(@Req() req: any) {
+    console.log('[DEBUG FINDALL NOTIFICATIONS] req.user:', req.user);
     return this.notificationsService.findAll(req.user.tenant_slug, req.user);
   }
 
