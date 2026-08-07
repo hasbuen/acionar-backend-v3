@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Req, UseGuards, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Req, UseGuards, Query, Delete, Param } from '@nestjs/common';
 import { EstoqueService } from './estoque.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -37,4 +37,8 @@ export class EstoqueController {
     return this.estoqueService.findAlerts(req.user.tenant_slug, req.user);
   }
 
+  @Delete('produtos/:id')
+  async deleteProduto(@Req() req: any, @Param('id') id: string) {
+    return this.estoqueService.deleteProduto(req.user.tenant_slug, req.user, Number(id));
+  }
 }

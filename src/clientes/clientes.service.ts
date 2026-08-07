@@ -31,7 +31,7 @@ export class ClientesService {
 
 
   async create(tenantSlug: string, user: any, dto: any) {
-    const { nome, whatsapp, email, observacoes } = dto;
+    const { nome, whatsapp, observacoes } = dto;
     if (!nome) throw new BadRequestException('Nome do cliente é obrigatório.');
 
     await this.prisma.ensureTenantSchema(tenantSlug);
@@ -61,11 +61,10 @@ export class ClientesService {
       }
 
       const res: any = await this.prisma.$queryRawUnsafe(
-        'INSERT INTO clientes (profissional_id, nome, whatsapp, email, observacoes) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        'INSERT INTO clientes (profissional_id, nome, whatsapp, observacoes) VALUES ($1, $2, $3, $4) RETURNING *',
         profId,
         nome,
         whatsapp || null,
-        email || null,
         observacoes || null,
       );
       return { cliente: res[0] };
@@ -76,17 +75,15 @@ export class ClientesService {
   async update(tenantSlug: string, id: number, dto: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const { nome, whatsapp, email, observacoes } = dto;
+      const { nome, whatsapp, observacoes } = dto;
       const res: any = await this.prisma.$queryRawUnsafe(
         `UPDATE clientes
          SET nome = COALESCE($1, nome),
              whatsapp = COALESCE($2, whatsapp),
-             email = COALESCE($3, email),
-             observacoes = COALESCE($4, observacoes)
-         WHERE id = $5 RETURNING *`,
+             observacoes = COALESCE($3, observacoes)
+         WHERE id = $4 RETURNING *`,
         nome,
         whatsapp,
-        email,
         observacoes,
         id,
       );

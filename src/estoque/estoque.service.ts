@@ -340,4 +340,31 @@ export class EstoqueService {
       };
     });
   }
+
+  async deleteProduto(tenantSlug: string, user: any, id: number) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const profId = user?.profissional_id;
+      let sql = 'SELECT * FROM estoque_produtos WHERE id = $1';
+      const params: any[] = [id];
+      if (profId) {
+        params.push(profId);
+        sql += ' AND profissional_id = $2';
+      }
+      const prodRes: any = await this.prisma.$queryRawUnsafe(sql, ...params);
+      if (!prodRes || prodRes.length === 0) throw new NotFoundException('Produto não encontrado ou sem permissão.');
+
+      const movRes: any = await this.prisma.$queryRawUnsafe(
+        'SELECT COUNT(*) as count FROM estoque_movimentacoes WHERE produto_id = $1',
+        id
+      );
+      const count = Number(movRes[0].count);
+      if (count > 0) {
+        throw new BadRequestException('Produto possui movimentações vinculadas e não pode ser excluído.');
+      }
+
+      await this.prisma.$queryRawUnsafe('DELETE FROM estoque_produtos WHERE id = $1', id);
+      return { message: 'Produto excluído com sucesso.' };
+    });
+  }
 }
