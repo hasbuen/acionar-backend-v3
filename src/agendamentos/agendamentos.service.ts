@@ -165,17 +165,43 @@ export class AgendamentosService {
       if ((status === 'agendado' || status === 'confirmado') && !agendamento.cliente_id && agendamento.observacao && agendamento.observacao.startsWith('{"temp_cliente_nome"')) {
         try {
           const temp = JSON.parse(agendamento.observacao);
-          
-          const clientInsert: any = await this.prisma.$queryRawUnsafe(
-            `INSERT INTO clientes (profissional_id, nome, whatsapp, email)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (whatsapp) 
-             DO UPDATE SET nome = EXCLUDED.nome, email = COALESCE(EXCLUDED.email, clientes.email), profissional_id = COALESCE(clientes.profissional_id, EXCLUDED.profissional_id)
-             RETURNING id`,
-            targetProfId, temp.temp_cliente_nome, temp.temp_cliente_whatsapp, temp.temp_cliente_email
-          );
+          const whatsappClean = String(temp.temp_cliente_whatsapp || '').trim();
 
-          finalClienteId = clientInsert[0].id;
+          let clientQuery: any[] = [];
+          if (whatsappClean) {
+            clientQuery = await this.prisma.$queryRawUnsafe(
+              'SELECT id FROM clientes WHERE whatsapp = $1 LIMIT 1',
+              whatsappClean
+            );
+          }
+
+          if (clientQuery && clientQuery.length > 0) {
+            const existingId = clientQuery[0].id;
+            await this.prisma.$executeRawUnsafe(
+              `UPDATE clientes 
+               SET nome = $1, 
+                   email = COALESCE($2, email), 
+                   profissional_id = COALESCE(profissional_id, $3) 
+               WHERE id = $4`,
+              temp.temp_cliente_nome,
+              temp.temp_cliente_email || null,
+              targetProfId,
+              existingId
+            );
+            finalClienteId = existingId;
+          } else {
+            const clientInsert: any = await this.prisma.$queryRawUnsafe(
+              `INSERT INTO clientes (profissional_id, nome, whatsapp, email)
+               VALUES ($1, $2, $3, $4)
+               RETURNING id`,
+              targetProfId,
+              temp.temp_cliente_nome,
+              whatsappClean,
+              temp.temp_cliente_email || null
+            );
+            finalClienteId = clientInsert[0].id;
+          }
+
           finalObservacao = temp.observacao_cliente || '';
         } catch (e) {
           console.error('[NESTJS FORMAL CLIENT CREATION ERROR]', e);
