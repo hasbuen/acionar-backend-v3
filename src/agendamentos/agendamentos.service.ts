@@ -159,7 +159,12 @@ export class AgendamentosService {
 
       let finalClienteId = agendamento.cliente_id;
       let finalObservacao = observacao;
-      const targetProfId = finalProfId || user?.profissional_id;
+      let targetProfId = finalProfId || user?.profissional_id;
+
+      if (!targetProfId) {
+        const profFallback: any = await this.prisma.$queryRawUnsafe('SELECT id FROM profissionais WHERE ativo = true LIMIT 1');
+        if (profFallback && profFallback.length > 0) targetProfId = profFallback[0].id;
+      }
 
       let tempClientData: any = null;
       if (agendamento.observacao) {
@@ -222,13 +227,13 @@ export class AgendamentosService {
                    complemento = COALESCE($6, complemento),
                    profissional_id = COALESCE(profissional_id, $7) 
                WHERE id = $8`,
-              tempClientData.temp_cliente_nome,
+              tempClientData.temp_cliente_nome || 'Cliente',
               tempClientData.temp_cliente_email || null,
-              ruaVal,
-              numeroVal,
-              bairroVal,
-              complementoVal,
-              targetProfId,
+              ruaVal || null,
+              numeroVal || null,
+              bairroVal || null,
+              complementoVal || null,
+              targetProfId || null,
               existingId
             );
             finalClienteId = existingId;
@@ -237,14 +242,14 @@ export class AgendamentosService {
               `INSERT INTO clientes (profissional_id, nome, whatsapp, email, rua, numero, bairro, complemento)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                RETURNING id`,
-              targetProfId,
-              tempClientData.temp_cliente_nome,
-              whatsappClean,
+              targetProfId || null,
+              tempClientData.temp_cliente_nome || 'Cliente',
+              whatsappClean || null,
               tempClientData.temp_cliente_email || null,
-              ruaVal,
-              numeroVal,
-              bairroVal,
-              complementoVal
+              ruaVal || null,
+              numeroVal || null,
+              bairroVal || null,
+              complementoVal || null
             );
             finalClienteId = clientInsert[0].id;
           }

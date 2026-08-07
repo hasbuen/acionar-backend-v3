@@ -371,27 +371,33 @@ export class PublicService {
                      bairro = COALESCE($5, bairro),
                      complemento = COALESCE($6, complemento)
                  WHERE id = $7`,
-                tempClientData.temp_cliente_nome,
+                tempClientData.temp_cliente_nome || 'Cliente',
                 tempClientData.temp_cliente_email || null,
-                ruaVal,
-                numeroVal,
-                bairroVal,
-                complementoVal,
+                ruaVal || null,
+                numeroVal || null,
+                bairroVal || null,
+                complementoVal || null,
                 newClienteId
               );
             } else {
+              let targetProfId = agendamento.profissional_id;
+              if (!targetProfId) {
+                const profFallback: any = await this.prisma.$queryRawUnsafe('SELECT id FROM profissionais WHERE ativo = true LIMIT 1');
+                if (profFallback && profFallback.length > 0) targetProfId = profFallback[0].id;
+              }
+
               const clientInsert: any = await this.prisma.$queryRawUnsafe(
                 `INSERT INTO clientes (profissional_id, nome, whatsapp, email, rua, numero, bairro, complemento)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  RETURNING id`,
-                agendamento.profissional_id || null,
-                tempClientData.temp_cliente_nome,
-                whatsappClean,
+                targetProfId || null,
+                tempClientData.temp_cliente_nome || 'Cliente',
+                whatsappClean || null,
                 tempClientData.temp_cliente_email || null,
-                ruaVal,
-                numeroVal,
-                bairroVal,
-                complementoVal
+                ruaVal || null,
+                numeroVal || null,
+                bairroVal || null,
+                complementoVal || null
               );
               newClienteId = clientInsert[0].id;
             }
@@ -403,11 +409,11 @@ export class PublicService {
 
       const updated: any = await this.prisma.$queryRawUnsafe(
         `UPDATE agendamentos 
-         SET status = 'agendado', cliente_id = COALESCE($2, cliente_id)
+         SET status = 'confirmado', cliente_id = COALESCE($2, cliente_id)
          WHERE id = $1 
          RETURNING *`,
         appointmentId,
-        newClienteId
+        newClienteId || null
       );
 
       // Trigger websocket update
@@ -415,7 +421,7 @@ export class PublicService {
         this.notificationsGateway.broadcastToTenant(cleanSlug, 'appointments-changed', {
           action: 'update',
           id: appointmentId,
-          status: 'agendado'
+          status: 'confirmado'
         });
       } catch (e) {}
 
