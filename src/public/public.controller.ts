@@ -25,6 +25,11 @@ export class PublicController {
     return this.publicService.createPublicAppointment(slug, body);
   }
 
+  @Post('tenant/:slug/agendamentos/:id/confirmar-rapido')
+  async confirmQuickAppointment(@Param('slug') slug: string, @Param('id') id: string) {
+    return this.publicService.confirmQuickAppointment(slug, parseInt(id, 10));
+  }
+
   @Post('asaas-webhook')
   async handleAsaasWebhook(@Body() body: any) {
     return this.publicService.handleAsaasWebhook(body);

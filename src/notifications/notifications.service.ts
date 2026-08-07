@@ -69,14 +69,24 @@ export class NotificationsService {
       const appointment = apptRows[0];
 
       let nomeCliente = appointment.cliente_nome;
-      if (!nomeCliente && appointment.observacao) {
+      let whatsappCliente = appointment.cliente_whatsapp;
+      if (appointment.observacao) {
         try {
           const obs = typeof appointment.observacao === 'object' ? appointment.observacao : JSON.parse(appointment.observacao);
           if (obs && obs.temp_cliente_nome) {
             nomeCliente = obs.temp_cliente_nome;
           }
+          if (obs && obs.temp_cliente_whatsapp) {
+            whatsappCliente = obs.temp_cliente_whatsapp;
+          }
         } catch (e) {}
       }
+
+      const cleanPhone = whatsappCliente ? String(whatsappCliente).replace(/\D/g, '') : '';
+      const phoneFormatted = cleanPhone ? (cleanPhone.length >= 10 ? `(${cleanPhone.slice(-11, -8)}) ${cleanPhone.slice(-8, -4)}-${cleanPhone.slice(-4)}` : cleanPhone) : 'Não informado';
+      const dateFormatted = new Date(appointment.data_hora).toLocaleDateString('pt-BR');
+      const timeFormatted = new Date(appointment.data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      const dataHoraFormatted = `${dateFormatted} às ${timeFormatted}`;
 
       let subscriptions: any[] = [];
       if (appointment.profissional_id) {
@@ -94,12 +104,24 @@ export class NotificationsService {
 
       const payload = JSON.stringify({
         title: `Novo agendamento: ${nomeCliente || 'Cliente'}`,
-        body: `Serviço: ${appointment.servico_nome || 'Serviço'}\nData: ${new Date(appointment.data_hora).toLocaleString('pt-BR')}`,
+        body: `Serviço: ${appointment.servico_nome || 'Serviço'}\nData: ${dataHoraFormatted}\n📱 WhatsApp: ${phoneFormatted}`,
         url: '/agenda',
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
         data: {
           url: '/agenda',
-          agendamentoId: appointment.id
-        }
+          tenantSlug,
+          agendamentoId: appointment.id,
+          clienteNome: nomeCliente || 'Cliente',
+          servicoNome: appointment.servico_nome || 'Serviço',
+          whatsapp: cleanPhone ? (cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`) : '',
+          dataHoraFormatted,
+          confirmUrl: `/api/public/tenant/${tenantSlug}/agendamentos/${appointment.id}/confirmar-rapido`
+        },
+        actions: [
+          { action: 'confirm_whatsapp', title: '✅ Confirmar & WhatsApp' },
+          { action: 'open_agenda', title: '📅 Ver na Agenda' }
+        ]
       });
 
       for (const sub of subscriptions) {

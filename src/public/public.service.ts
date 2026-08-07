@@ -277,5 +277,31 @@ export class PublicService {
       return { ok: false, error: err.message };
     }
   }
+
+  async confirmQuickAppointment(slug: string, appointmentId: number) {
+    const cleanSlug = slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    await this.prisma.ensureTenantSchema(cleanSlug);
+
+    return this.prisma.runInTenantSchema(cleanSlug, async () => {
+      const updated: any = await this.prisma.$queryRawUnsafe(
+        `UPDATE agendamentos 
+         SET status = 'agendado' 
+         WHERE id = $1 
+         RETURNING *`,
+        appointmentId
+      );
+
+      // Trigger websocket update
+      try {
+        this.notificationsGateway.broadcastToTenant(cleanSlug, 'appointments-changed', {
+          action: 'update',
+          id: appointmentId,
+          status: 'agendado'
+        });
+      } catch (e) {}
+
+      return { ok: true, agendamento: updated[0] };
+    });
+  }
 }
 
