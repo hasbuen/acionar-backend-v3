@@ -41,12 +41,16 @@ export class AgendamentosService {
         sql += ` AND a.data_hora <= $${params.length}::timestamptz`;
       }
       if (status) {
-        params.push(status);
-        sql += ` AND a.status = $${params.length}`;
+        if (status === 'confirmado' || status === 'agendado') {
+          sql += ` AND (a.status = 'confirmado' OR a.status = 'agendado')`;
+        } else {
+          params.push(status);
+          sql += ` AND a.status = $${params.length}`;
+        }
       }
       if (profIdFilter) {
         params.push(profIdFilter);
-        sql += ` AND (a.profissional_id = $${params.length} OR (a.profissional_id IS NULL AND a.status = 'aguardando_confirmacao'))`;
+        sql += ` AND (a.profissional_id = $${params.length} OR a.profissional_id IS NULL)`;
       }
 
       sql += ' ORDER BY a.data_hora ASC';

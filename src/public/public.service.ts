@@ -416,13 +416,22 @@ export class PublicService {
         }
       }
 
+      let targetProfId = agendamento.profissional_id;
+      if (!targetProfId) {
+        const profFallback: any = await this.prisma.$queryRawUnsafe('SELECT id FROM profissionais WHERE ativo = true LIMIT 1');
+        if (profFallback && profFallback.length > 0) targetProfId = profFallback[0].id;
+      }
+
       const updated: any = await this.prisma.$queryRawUnsafe(
         `UPDATE agendamentos 
-         SET status = 'confirmado', cliente_id = COALESCE($2, cliente_id)
+         SET status = 'confirmado', 
+             profissional_id = COALESCE(profissional_id, $3),
+             cliente_id = COALESCE($2, cliente_id)
          WHERE id = $1 
          RETURNING *`,
         appointmentId,
-        newClienteId || null
+        newClienteId || null,
+        targetProfId || null
       );
 
       // Trigger websocket update
