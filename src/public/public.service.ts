@@ -155,7 +155,30 @@ export class PublicService {
         const timeFormatted = new Date(data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         const servNameQuery: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM servicos WHERE id = $1', servico_id);
         const serviceName = servNameQuery[0]?.nome || 'Serviço';
-        const msgText = `Nova solicitação: ${cliente_nome} agendou ${serviceName} para o dia ${dateFormatted} às ${timeFormatted}.`;
+
+        const isDom = tipo_atendimento === 'domicilio' || tipo_atendimento === 'externo' || !!endereco_externo;
+        let endStr = '';
+        if (endereco_externo) {
+          if (typeof endereco_externo === 'object') {
+            endStr = `${endereco_externo.rua || ''}, ${endereco_externo.numero || ''} ${endereco_externo.bairro ? `— ${endereco_externo.bairro}` : ''}`;
+          } else {
+            try {
+              const parsed = JSON.parse(endereco_externo);
+              if (typeof parsed === 'object' && parsed !== null) {
+                endStr = `${parsed.rua || ''}, ${parsed.numero || ''} ${parsed.bairro ? `— ${parsed.bairro}` : ''}`;
+              } else {
+                endStr = String(endereco_externo);
+              }
+            } catch (e) {
+              endStr = String(endereco_externo);
+            }
+          }
+        }
+
+        const notifTitle = isDom ? `🏠 Solicitação DOMICILIAR: ${cliente_nome}` : `Solicitação: ${cliente_nome}`;
+        const msgText = isDom
+          ? `Atendimento a DOMICÍLIO solicitado por ${cliente_nome} para ${serviceName} no dia ${dateFormatted} às ${timeFormatted}.${endStr ? ` 📍 Endereço: ${endStr}` : ''}`
+          : `Nova solicitação: ${cliente_nome} agendou ${serviceName} para o dia ${dateFormatted} às ${timeFormatted}.`;
 
         let targetProfs = [];
         if (profissional_id) {
@@ -169,8 +192,9 @@ export class PublicService {
         for (const p of targetProfs) {
           await this.prisma.$queryRawUnsafe(
             `INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida)
-             VALUES ($1, 'Solicitação Pendente', $2, false)`,
+             VALUES ($1, $2, $3, false)`,
             p.id,
+            notifTitle,
             msgText
           );
         }

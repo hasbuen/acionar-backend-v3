@@ -88,6 +88,40 @@ export class NotificationsService {
       const timeFormatted = new Date(appointment.data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
       const dataHoraFormatted = `${dateFormatted} às ${timeFormatted}`;
 
+      const isDomicilio = (appointment.tipo_atendimento || '').toLowerCase() === 'domicilio' || (appointment.tipo_atendimento || '').toLowerCase() === 'externo' || !!appointment.endereco_externo;
+
+      let enderecoTexto = '';
+      if (appointment.endereco_externo) {
+        if (typeof appointment.endereco_externo === 'object') {
+          const endObj = appointment.endereco_externo;
+          enderecoTexto = `${endObj.rua || ''}, ${endObj.numero || ''} ${endObj.bairro ? `— ${endObj.bairro}` : ''}`;
+        } else {
+          try {
+            const parsed = JSON.parse(appointment.endereco_externo);
+            if (typeof parsed === 'object' && parsed !== null) {
+              enderecoTexto = `${parsed.rua || ''}, ${parsed.numero || ''} ${parsed.bairro ? `— ${parsed.bairro}` : ''}`;
+            } else {
+              enderecoTexto = String(appointment.endereco_externo);
+            }
+          } catch (e) {
+            enderecoTexto = String(appointment.endereco_externo);
+          }
+        }
+      }
+
+      const notifTitle = isDomicilio ? `🏠 Agendamento DOMICILIAR: ${nomeCliente || 'Cliente'}` : `Novo agendamento: ${nomeCliente || 'Cliente'}`;
+
+      const bodyLines: string[] = [];
+      if (isDomicilio) {
+        bodyLines.push(`🏠 Local: ATENDIMENTO A DOMICÍLIO`);
+        if (enderecoTexto) {
+          bodyLines.push(`📍 Endereço: ${enderecoTexto}`);
+        }
+      }
+      bodyLines.push(`Serviço: ${appointment.servico_nome || 'Serviço'}`);
+      bodyLines.push(`Data: ${dataHoraFormatted}`);
+      bodyLines.push(`📱 WhatsApp: ${phoneFormatted}`);
+
       let subscriptions: any[] = [];
       if (appointment.profissional_id) {
         subscriptions = await this.prisma.$queryRawUnsafe(
@@ -103,8 +137,8 @@ export class NotificationsService {
       if (subscriptions.length === 0) return;
 
       const payload = JSON.stringify({
-        title: `Novo agendamento: ${nomeCliente || 'Cliente'}`,
-        body: `Serviço: ${appointment.servico_nome || 'Serviço'}\nData: ${dataHoraFormatted}\n📱 WhatsApp: ${phoneFormatted}`,
+        title: notifTitle,
+        body: bodyLines.join('\n'),
         url: '/agenda',
         icon: '/icon-192.png',
         badge: '/icon-192.png',
