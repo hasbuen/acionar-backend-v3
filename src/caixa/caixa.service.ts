@@ -302,29 +302,45 @@ export class CaixaService {
 
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      // 1. Se for compra de mercadoria, atualiza o estoque e registra movimentação
-      if (tipo === 'saida' && categoria === 'compra_mercadoria' && produto_id) {
-        const qty = parseInt(quantidade_produto, 10);
-        if (isNaN(qty) || qty <= 0) {
-          throw new BadRequestException('Quantidade do produto inválida.');
+      // 1. Se for produto ou compra/venda de mercadoria, atualiza o estoque e registra movimentação
+      if (categoria === 'compra_mercadoria' || categoria === 'venda_produto' || categoria === 'produto') {
+        if (produto_id) {
+          const qty = parseInt(quantidade_produto, 10);
+          if (!isNaN(qty) && qty > 0) {
+            const pId = parseInt(produto_id, 10);
+            if (tipo === 'saida') {
+              // Incrementa o produto no estoque (compra)
+              await this.prisma.$executeRawUnsafe(
+                'UPDATE estoque_produtos SET quantidade = quantidade + $1 WHERE id = $2',
+                qty,
+                pId
+              );
+              await this.prisma.$executeRawUnsafe(
+                `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
+                 VALUES ($1, $2, 'entrada', $3, $4)`,
+                pId,
+                user.profissional_id || null,
+                qty,
+                `Compra de mercadoria lançada no Caixa: ${descricao}`
+              );
+            } else if (tipo === 'entrada') {
+              // Decrementa o produto no estoque (venda)
+              await this.prisma.$executeRawUnsafe(
+                'UPDATE estoque_produtos SET quantidade = GREATEST(0, quantidade - $1) WHERE id = $2',
+                qty,
+                pId
+              );
+              await this.prisma.$executeRawUnsafe(
+                `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
+                 VALUES ($1, $2, 'saida', $3, $4)`,
+                pId,
+                user.profissional_id || null,
+                qty,
+                `Venda de produto lançada no Caixa: ${descricao}`
+              );
+            }
+          }
         }
-
-        // Incrementa o produto no estoque
-        await this.prisma.$executeRawUnsafe(
-          'UPDATE estoque_produtos SET quantidade = quantidade + $1 WHERE id = $2',
-          qty,
-          parseInt(produto_id, 10)
-        );
-
-        // Registra a movimentação de entrada no estoque
-        await this.prisma.$executeRawUnsafe(
-          `INSERT INTO estoque_movimentacoes (produto_id, profissional_id, tipo, quantidade, motivo)
-           VALUES ($1, $2, 'entrada', $3, $4)`,
-          parseInt(produto_id, 10),
-          user.profissional_id || null,
-          qty,
-          `Compra de mercadoria lançada direto no Caixa: ${descricao}`
-        );
       }
 
       // 2. Registra o fluxo de caixa
