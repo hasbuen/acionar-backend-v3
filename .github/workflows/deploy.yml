@@ -28,7 +28,7 @@ jobs:
       - name: Deploy to VPS via SSH
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.VPS_IP || '76.13.230.110' }}
+          host: "76.13.230.110"
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "."
@@ -38,12 +38,12 @@ jobs:
       - name: Restart Application via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.VPS_IP || '76.13.230.110' }}
+          host: "76.13.230.110"
           username: root
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /var/www/acionar-v3/backend
-            npm install
+            npm install --legacy-peer-deps
             npx prisma generate
             npx prisma db push --accept-data-loss
             npm run build
