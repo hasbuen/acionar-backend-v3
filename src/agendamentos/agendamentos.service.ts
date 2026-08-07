@@ -161,11 +161,46 @@ export class AgendamentosService {
       let finalObservacao = observacao;
       const targetProfId = finalProfId || user?.profissional_id;
 
-      // Se for aceite de solicitação pública com cliente pendente em JSON, cadastra formalmente
-      if ((status === 'agendado' || status === 'confirmado') && !agendamento.cliente_id && agendamento.observacao && agendamento.observacao.startsWith('{"temp_cliente_nome"')) {
+      let tempClientData: any = null;
+      if (agendamento.observacao) {
+        if (typeof agendamento.observacao === 'object' && agendamento.observacao.temp_cliente_nome) {
+          tempClientData = agendamento.observacao;
+        } else if (typeof agendamento.observacao === 'string') {
+          try {
+            const parsed = JSON.parse(agendamento.observacao);
+            if (parsed && parsed.temp_cliente_nome) {
+              tempClientData = parsed;
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Se for aceite de solicitação pública com cliente pendente, cadastra formalmente no banco
+      if ((status === 'agendado' || status === 'confirmado') && !agendamento.cliente_id && tempClientData && tempClientData.temp_cliente_nome) {
         try {
-          const temp = JSON.parse(agendamento.observacao);
-          const whatsappClean = String(temp.temp_cliente_whatsapp || '').trim();
+          const whatsappClean = String(tempClientData.temp_cliente_whatsapp || '').trim();
+
+          let ruaVal = null;
+          let numeroVal = null;
+          let bairroVal = null;
+          let complementoVal = null;
+
+          if (agendamento.endereco_externo) {
+            if (typeof agendamento.endereco_externo === 'object') {
+              ruaVal = agendamento.endereco_externo.rua || null;
+              numeroVal = agendamento.endereco_externo.numero || null;
+              bairroVal = agendamento.endereco_externo.bairro || null;
+              complementoVal = agendamento.endereco_externo.complemento || null;
+            } else if (typeof agendamento.endereco_externo === 'string') {
+              try {
+                const parsedEnd = JSON.parse(agendamento.endereco_externo);
+                ruaVal = parsedEnd.rua || null;
+                numeroVal = parsedEnd.numero || null;
+                bairroVal = parsedEnd.bairro || null;
+                complementoVal = parsedEnd.complemento || null;
+              } catch (e) {}
+            }
+          }
 
           let clientQuery: any[] = [];
           if (whatsappClean) {
@@ -181,28 +216,40 @@ export class AgendamentosService {
               `UPDATE clientes 
                SET nome = $1, 
                    email = COALESCE($2, email), 
-                   profissional_id = COALESCE(profissional_id, $3) 
-               WHERE id = $4`,
-              temp.temp_cliente_nome,
-              temp.temp_cliente_email || null,
+                   rua = COALESCE($3, rua),
+                   numero = COALESCE($4, numero),
+                   bairro = COALESCE($5, bairro),
+                   complemento = COALESCE($6, complemento),
+                   profissional_id = COALESCE(profissional_id, $7) 
+               WHERE id = $8`,
+              tempClientData.temp_cliente_nome,
+              tempClientData.temp_cliente_email || null,
+              ruaVal,
+              numeroVal,
+              bairroVal,
+              complementoVal,
               targetProfId,
               existingId
             );
             finalClienteId = existingId;
           } else {
             const clientInsert: any = await this.prisma.$queryRawUnsafe(
-              `INSERT INTO clientes (profissional_id, nome, whatsapp, email)
-               VALUES ($1, $2, $3, $4)
+              `INSERT INTO clientes (profissional_id, nome, whatsapp, email, rua, numero, bairro, complemento)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                RETURNING id`,
               targetProfId,
-              temp.temp_cliente_nome,
+              tempClientData.temp_cliente_nome,
               whatsappClean,
-              temp.temp_cliente_email || null
+              tempClientData.temp_cliente_email || null,
+              ruaVal,
+              numeroVal,
+              bairroVal,
+              complementoVal
             );
             finalClienteId = clientInsert[0].id;
           }
 
-          finalObservacao = temp.observacao_cliente || '';
+          finalObservacao = tempClientData.observacao_cliente || '';
         } catch (e) {
           console.error('[NESTJS FORMAL CLIENT CREATION ERROR]', e);
         }

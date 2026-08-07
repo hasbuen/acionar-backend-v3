@@ -307,12 +307,107 @@ export class PublicService {
     await this.prisma.ensureTenantSchema(cleanSlug);
 
     return this.prisma.runInTenantSchema(cleanSlug, async () => {
+      const agRows: any = await this.prisma.$queryRawUnsafe(
+        'SELECT * FROM agendamentos WHERE id = $1',
+        appointmentId
+      );
+
+      if (!agRows || agRows.length === 0) return { ok: false, message: 'Appointment not found' };
+      const agendamento = agRows[0];
+
+      let newClienteId = agendamento.cliente_id;
+
+      if (!agendamento.cliente_id && agendamento.observacao) {
+        try {
+          let tempClientData: any = null;
+          if (typeof agendamento.observacao === 'object' && agendamento.observacao.temp_cliente_nome) {
+            tempClientData = agendamento.observacao;
+          } else if (typeof agendamento.observacao === 'string') {
+            const parsed = JSON.parse(agendamento.observacao);
+            if (parsed && parsed.temp_cliente_nome) tempClientData = parsed;
+          }
+
+          if (tempClientData && tempClientData.temp_cliente_nome) {
+            const whatsappClean = String(tempClientData.temp_cliente_whatsapp || '').trim();
+
+            let ruaVal = null;
+            let numeroVal = null;
+            let bairroVal = null;
+            let complementoVal = null;
+
+            if (agendamento.endereco_externo) {
+              if (typeof agendamento.endereco_externo === 'object') {
+                ruaVal = agendamento.endereco_externo.rua || null;
+                numeroVal = agendamento.endereco_externo.numero || null;
+                bairroVal = agendamento.endereco_externo.bairro || null;
+                complementoVal = agendamento.endereco_externo.complemento || null;
+              } else if (typeof agendamento.endereco_externo === 'string') {
+                try {
+                  const parsedEnd = JSON.parse(agendamento.endereco_externo);
+                  ruaVal = parsedEnd.rua || null;
+                  numeroVal = parsedEnd.numero || null;
+                  bairroVal = parsedEnd.bairro || null;
+                  complementoVal = parsedEnd.complemento || null;
+                } catch (e) {}
+              }
+            }
+
+            let clientQuery: any[] = [];
+            if (whatsappClean) {
+              clientQuery = await this.prisma.$queryRawUnsafe(
+                'SELECT id FROM clientes WHERE whatsapp = $1 LIMIT 1',
+                whatsappClean
+              );
+            }
+
+            if (clientQuery && clientQuery.length > 0) {
+              newClienteId = clientQuery[0].id;
+              await this.prisma.$executeRawUnsafe(
+                `UPDATE clientes 
+                 SET nome = $1, 
+                     email = COALESCE($2, email), 
+                     rua = COALESCE($3, rua),
+                     numero = COALESCE($4, numero),
+                     bairro = COALESCE($5, bairro),
+                     complemento = COALESCE($6, complemento)
+                 WHERE id = $7`,
+                tempClientData.temp_cliente_nome,
+                tempClientData.temp_cliente_email || null,
+                ruaVal,
+                numeroVal,
+                bairroVal,
+                complementoVal,
+                newClienteId
+              );
+            } else {
+              const clientInsert: any = await this.prisma.$queryRawUnsafe(
+                `INSERT INTO clientes (profissional_id, nome, whatsapp, email, rua, numero, bairro, complemento)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 RETURNING id`,
+                agendamento.profissional_id || null,
+                tempClientData.temp_cliente_nome,
+                whatsappClean,
+                tempClientData.temp_cliente_email || null,
+                ruaVal,
+                numeroVal,
+                bairroVal,
+                complementoVal
+              );
+              newClienteId = clientInsert[0].id;
+            }
+          }
+        } catch (eClient) {
+          console.error('[QUICK CONFIRM CLIENT REGISTRATION ERROR]', eClient);
+        }
+      }
+
       const updated: any = await this.prisma.$queryRawUnsafe(
         `UPDATE agendamentos 
-         SET status = 'agendado' 
+         SET status = 'agendado', cliente_id = COALESCE($2, cliente_id)
          WHERE id = $1 
          RETURNING *`,
-        appointmentId
+        appointmentId,
+        newClienteId
       );
 
       // Trigger websocket update
