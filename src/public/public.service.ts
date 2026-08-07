@@ -60,7 +60,7 @@ export class PublicService {
     await this.prisma.ensureTenantSchema(cleanSlug);
 
     return this.prisma.runInTenantSchema(cleanSlug, async () => {
-      const profissionais: any = await this.prisma.$queryRawUnsafe('SELECT id, nome, foto_url, cargo FROM profissionais WHERE ativo = true ORDER BY nome ASC');
+      const profissionais: any = await this.prisma.$queryRawUnsafe('SELECT id, nome, foto_url, cargo, aceita_atendimento_externo FROM profissionais WHERE ativo = true ORDER BY nome ASC');
       return { profissionais };
     });
   }
