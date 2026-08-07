@@ -48,7 +48,7 @@ router.get('/public-schedule', authMiddleware, async (req, res) => {
   try {
     const { tenant_slug } = req.user;
     const result = await queryPublic(
-      'SELECT slug, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, agenda_publica_ativa FROM public.tenants WHERE slug = $1',
+      'SELECT slug, subdominio, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, agenda_publica_ativa FROM public.tenants WHERE slug = $1',
       [tenant_slug]
     );
 
@@ -56,7 +56,10 @@ router.get('/public-schedule', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Tenant not found.' });
     }
 
-    res.json({ settings: result.rows[0] });
+    const tenant = result.rows[0];
+    tenant.slug = tenant.subdominio || tenant.slug;
+
+    res.json({ settings: tenant });
   } catch (err) {
     console.error('[GET CONFIG ERROR]', err);
     res.status(500).json({ error: 'Failed to fetch public schedule configuration.' });
@@ -76,7 +79,7 @@ router.put('/public-schedule', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Tenant not found.' });
     }
     const currentTenant = current.rows[0];
-    const isAtiva = agenda_publica_ativa !== undefined ? Boolean(agenda_publica_ativa) : currentTenant.agenda_publica_ativa;
+    const isAtiva = agenda_publica_ativa !== undefined ? agenda_publica_ativa : currentTenant.agenda_publica_ativa;
 
     if (nome_empresa !== undefined && nome_empresa !== currentTenant.nome_empresa) {
       if (!isAtiva) {
@@ -84,16 +87,20 @@ router.put('/public-schedule', authMiddleware, async (req, res) => {
       }
     }
 
-    let targetSlug = tenant_slug;
+    let targetSubdomain = null;
 
-    // Optional slug update
-    if (novo_slug && novo_slug !== tenant_slug) {
-      const cleanSlug = novo_slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
-      const existing = await queryPublic('SELECT id FROM public.tenants WHERE slug = $1', [cleanSlug]);
-      if (existing.rows.length > 0) {
-        return res.status(409).json({ error: `Subdomain/Slug '${cleanSlug}' is already taken.` });
+    if (novo_slug) {
+      const cleanSub = novo_slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+      if (cleanSub !== tenant_slug) {
+        const existing = await queryPublic(
+          'SELECT id FROM public.tenants WHERE (subdominio = $1 OR slug = $1) AND slug != $2',
+          [cleanSub, tenant_slug]
+        );
+        if (existing.rows.length > 0) {
+          return res.status(409).json({ error: `Subdomain '${cleanSub}' is already taken.` });
+        }
+        targetSubdomain = cleanSub;
       }
-      targetSlug = cleanSlug;
     }
 
     const result = await queryPublic(
@@ -105,11 +112,11 @@ router.put('/public-schedule', authMiddleware, async (req, res) => {
            cor_fundo = COALESCE($5, cor_fundo),
            cor_texto_principal = COALESCE($6, cor_texto_principal),
            cor_texto_secundario = COALESCE($7, cor_texto_secundario),
-           slug = $8,
+           subdominio = $8,
            nome_empresa = COALESCE($9, nome_empresa),
            updated_at = NOW()
        WHERE slug = $10
-       RETURNING slug, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, agenda_publica_ativa`,
+       RETURNING slug, subdominio, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, agenda_publica_ativa`,
       [
         agenda_publica_ativa,
         foto_url,
@@ -118,18 +125,23 @@ router.put('/public-schedule', authMiddleware, async (req, res) => {
         cor_fundo,
         cor_texto_principal,
         cor_texto_secundario,
-        targetSlug,
+        targetSubdomain,
         nome_empresa !== undefined && isAtiva ? String(nome_empresa).trim() : null,
         tenant_slug
       ]
     );
 
+    const updated = result.rows[0];
+    if (updated) {
+      updated.slug = updated.subdominio || updated.slug;
+    }
+
     clearTenantCache(tenant_slug);
-    clearTenantCache(targetSlug);
+    if (targetSubdomain) clearTenantCache(targetSubdomain);
 
     res.json({
-      message: 'Public schedule configuration updated successfully.',
-      settings: result.rows[0]
+      message: 'Configuration saved successfully.',
+      settings: updated
     });
   } catch (err) {
     console.error('[UPDATE CONFIG ERROR]', err);

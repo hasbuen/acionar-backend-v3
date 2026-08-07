@@ -16,6 +16,7 @@ datasource db {
 model Tenant {
   id                    Int      @id @default(autoincrement())
   slug                  String   @unique @db.VarChar(64)
+  subdominio            String?  @unique @db.VarChar(64)
   nome_empresa          String   @db.VarChar(120)
   email_proprietario    String   @db.VarChar(120)
   telefone              String?  @db.VarChar(30)

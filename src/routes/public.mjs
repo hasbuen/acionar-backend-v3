@@ -5,22 +5,27 @@ import { sendPushNotification } from '../services/push.mjs';
 
 const router = express.Router();
 
+async function getTenantBySubdomainOrSlug(inputSlug) {
+  const result = await queryPublic(
+    'SELECT * FROM public.tenants WHERE subdominio = $1 OR (subdominio IS NULL AND slug = $1)',
+    [inputSlug]
+  );
+  return result.rows[0] || null;
+}
+
 /**
  * GET /api/public/tenant/:slug
  */
 router.get('/tenant/:slug', async (req, res) => {
   try {
-    const slug = req.params.slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
-    const result = await queryPublic(
-      'SELECT slug, nome_empresa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, agenda_publica_ativa FROM public.tenants WHERE slug = $1',
-      [slug]
-    );
+    const paramSlug = req.params.slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    const tenant = await getTenantBySubdomainOrSlug(paramSlug);
 
-    if (result.rows.length === 0) {
+    if (!tenant) {
       return res.status(404).json({ error: 'Tenant not found.' });
     }
 
-    res.json({ tenant: result.rows[0] });
+    res.json({ tenant });
   } catch (err) {
     console.error('[PUBLIC TENANT INFO ERROR]', err);
     res.status(500).json({ error: 'Failed to fetch public tenant details.' });
@@ -32,7 +37,11 @@ router.get('/tenant/:slug', async (req, res) => {
  */
 router.get('/tenant/:slug/servicos', async (req, res) => {
   try {
-    const slug = req.params.slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    const paramSlug = req.params.slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    const tenant = await getTenantBySubdomainOrSlug(paramSlug);
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found.' });
+    const slug = tenant.slug;
+
     await initTenantSchema(slug);
 
     const servicosRes = await queryTenant(slug, 'SELECT * FROM servicos WHERE ativo = true ORDER BY nome ASC');
@@ -55,7 +64,11 @@ router.get('/tenant/:slug/servicos', async (req, res) => {
  */
 router.get('/tenant/:slug/profissionais', async (req, res) => {
   try {
-    const slug = req.params.slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    const paramSlug = req.params.slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    const tenant = await getTenantBySubdomainOrSlug(paramSlug);
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found.' });
+    const slug = tenant.slug;
+
     await initTenantSchema(slug);
 
     const result = await queryTenant(
@@ -75,17 +88,16 @@ router.get('/tenant/:slug/profissionais', async (req, res) => {
  */
 router.post('/tenant/:slug/agendamentos', async (req, res) => {
   try {
-    const slug = req.params.slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
-
-    // Check if public schedule is active
-    const tenantRes = await queryPublic('SELECT agenda_publica_ativa FROM public.tenants WHERE slug = $1', [slug]);
-    if (tenantRes.rows.length === 0) {
+    const paramSlug = req.params.slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    const tenant = await getTenantBySubdomainOrSlug(paramSlug);
+    if (!tenant) {
       return res.status(404).json({ error: 'Tenant not found.' });
     }
-    if (!tenantRes.rows[0].agenda_publica_ativa) {
+    if (!tenant.agenda_publica_ativa) {
       return res.status(403).json({ error: 'Public online scheduling is currently disabled for this establishment.' });
     }
 
+    const slug = tenant.slug;
     await initTenantSchema(slug);
 
     const {

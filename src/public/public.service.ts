@@ -14,8 +14,13 @@ export class PublicService {
 
   async getTenantPublicInfo(slug: string) {
     const cleanSlug = slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
-    const tenant = await this.prisma.tenant.findUnique({
-      where: { slug: cleanSlug },
+    const tenant = await this.prisma.tenant.findFirst({
+      where: {
+        OR: [
+          { subdominio: cleanSlug },
+          { slug: cleanSlug },
+        ]
+      },
       select: {
         slug: true,
         nome_empresa: true,

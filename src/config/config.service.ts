@@ -35,6 +35,7 @@ export class ConfigService {
       where: { slug: tenantSlug },
       select: {
         slug: true,
+        subdominio: true,
         nome_empresa: true,
         foto_url: true,
         cor_primaria: true,
@@ -47,12 +48,16 @@ export class ConfigService {
     });
 
     if (!tenant) throw new NotFoundException('Tenant not found.');
-    return { settings: tenant };
+    return {
+      settings: {
+        ...tenant,
+        slug: tenant.subdominio || tenant.slug,
+      }
+    };
   }
 
   async updatePublicScheduleConfig(tenantSlug: string, dto: any) {
     const { agenda_publica_ativa, foto_url, cor_primaria, cor_destaque, cor_fundo, cor_texto_principal, cor_texto_secundario, novo_slug, nome_empresa } = dto;
-    let targetSlug = tenantSlug;
 
     const currentTenant = await this.prisma.tenant.findUnique({ where: { slug: tenantSlug } });
     if (!currentTenant) throw new NotFoundException('Tenant not found.');
@@ -62,24 +67,34 @@ export class ConfigService {
     if (nome_empresa !== undefined && nome_empresa !== currentTenant.nome_empresa) {
       if (!isAtiva) {
         throw new ConflictException('Não é possível alterar o nome da empresa com a agenda pública desativada.');
-        
-        /*BadRequestException('Não é possível alterar o nome da empresa com a agenda pública desativada.');*/
       }
     }
 
-    if (novo_slug && novo_slug !== tenantSlug) {
-      const cleanSlug = novo_slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
-      const existing = await this.prisma.tenant.findUnique({ where: { slug: cleanSlug } });
-      if (existing) {
-        throw new ConflictException(`Slug '${cleanSlug}' is already taken.`);
+    let targetSubdomain = null;
+
+    if (novo_slug) {
+      const cleanSub = novo_slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+      if (cleanSub !== tenantSlug) {
+        const existing = await this.prisma.tenant.findFirst({
+          where: {
+            OR: [
+              { subdominio: cleanSub },
+              { slug: cleanSub }
+            ],
+            slug: { not: tenantSlug }
+          }
+        });
+        if (existing) {
+          throw new ConflictException(`Slug '${cleanSub}' is already taken.`);
+        }
+        targetSubdomain = cleanSub;
       }
-      targetSlug = cleanSlug;
     }
 
     const updated = await this.prisma.tenant.update({
       where: { slug: tenantSlug },
       data: {
-        slug: targetSlug,
+        subdominio: targetSubdomain,
         nome_empresa: nome_empresa !== undefined && isAtiva ? String(nome_empresa).trim() : undefined,
         agenda_publica_ativa: agenda_publica_ativa !== undefined ? agenda_publica_ativa : undefined,
         foto_url: foto_url !== undefined ? foto_url : undefined,
@@ -91,6 +106,7 @@ export class ConfigService {
       },
       select: {
         slug: true,
+        subdominio: true,
         nome_empresa: true,
         foto_url: true,
         cor_primaria: true,
@@ -104,7 +120,10 @@ export class ConfigService {
 
     return {
       message: 'Configuration updated successfully.',
-      settings: updated,
+      settings: {
+        ...updated,
+        slug: updated.subdominio || updated.slug,
+      },
     };
   }
 

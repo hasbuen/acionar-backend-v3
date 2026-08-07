@@ -10,6 +10,7 @@ export async function initPublicSchema() {
       CREATE TABLE IF NOT EXISTS public.tenants (
         id SERIAL PRIMARY KEY,
         slug VARCHAR(64) UNIQUE NOT NULL,
+        subdominio VARCHAR(64) UNIQUE,
         nome_empresa VARCHAR(120) NOT NULL,
         email_proprietario VARCHAR(120) NOT NULL,
         telefone VARCHAR(30),
