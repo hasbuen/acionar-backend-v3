@@ -125,7 +125,7 @@ export class AgendamentosService {
   async update(tenantSlug: string, id: number, dto: any, user?: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
-      const { status, data_hora, valor_total, observacao, profissional_id } = dto;
+      const { status, data_hora, valor_total, observacao, profissional_id, endereco_externo } = dto;
 
       const agendRes: any = await this.prisma.$queryRawUnsafe(
         'SELECT * FROM agendamentos WHERE id = $1',
@@ -285,6 +285,38 @@ export class AgendamentosService {
         }
       }
 
+      let finalEnderecoExterno = agendamento.endereco_externo;
+      if (endereco_externo !== undefined && endereco_externo !== null) {
+        finalEnderecoExterno = typeof endereco_externo === 'object' ? JSON.stringify(endereco_externo) : String(endereco_externo);
+
+        if (finalClienteId) {
+          let ruaVal = null, numeroVal = null, bairroVal = null, complementoVal = null;
+          if (typeof endereco_externo === 'object') {
+            ruaVal = endereco_externo.rua || null;
+            numeroVal = endereco_externo.numero || null;
+            bairroVal = endereco_externo.bairro || null;
+            complementoVal = endereco_externo.complemento || null;
+          } else {
+            try {
+              const parsed = JSON.parse(endereco_externo);
+              ruaVal = parsed.rua || null;
+              numeroVal = parsed.numero || null;
+              bairroVal = parsed.bairro || null;
+              complementoVal = parsed.complemento || null;
+            } catch (e) {}
+          }
+          await this.prisma.$executeRawUnsafe(
+            `UPDATE clientes 
+             SET rua = COALESCE($1, rua),
+                 numero = COALESCE($2, numero),
+                 bairro = COALESCE($3, bairro),
+                 complemento = COALESCE($4, complemento)
+             WHERE id = $5`,
+            ruaVal, numeroVal, bairroVal, complementoVal, finalClienteId
+          );
+        }
+      }
+
       // Atualizar agendamento
       const res: any = await this.prisma.$queryRawUnsafe(
         `UPDATE agendamentos
@@ -294,14 +326,16 @@ export class AgendamentosService {
              observacao = COALESCE($4, observacao),
              profissional_id = COALESCE($5, profissional_id),
              cliente_id = COALESCE($6, cliente_id),
+             endereco_externo = COALESCE($7, endereco_externo),
              updated_at = NOW()
-         WHERE id = $7 RETURNING *`,
+         WHERE id = $8 RETURNING *`,
         status !== undefined ? status : null,
         data_hora !== undefined && data_hora !== '' ? data_hora : null,
         valor_total !== undefined ? valor_total : null,
         finalObservacao !== undefined ? finalObservacao : null,
         finalProfId !== undefined ? finalProfId : null,
         finalClienteId,
+        finalEnderecoExterno !== undefined ? finalEnderecoExterno : null,
         id,
       );
 
