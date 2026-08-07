@@ -157,7 +157,8 @@ export class PublicService {
         const serviceName = servNameQuery[0]?.nome || 'Serviço';
         const msgText = `Nova solicitação: ${cliente_nome} agendou ${serviceName} para o dia ${dateFormatted} às ${timeFormatted}.`;
 
-        for (const p of profsAptos) {
+        const targetProfs = profissional_id ? [{ id: profissional_id }] : profsAptos;
+        for (const p of targetProfs) {
           await this.prisma.$queryRawUnsafe(
             `INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida)
              VALUES ($1, 'Solicitação Pendente', $2, false)`,
