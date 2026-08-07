@@ -58,21 +58,35 @@ export class AgendamentosService {
       const resRows: any = await this.prisma.$queryRawUnsafe(sql, ...params);
 
       const formattedAgendamentos = resRows.map(item => {
-        if (!item.cliente_id && item.observacao && item.observacao.startsWith('{"temp_cliente_nome"')) {
+        let clienteNome = item.cliente_nome;
+        let clienteWhatsapp = item.cliente_whatsapp;
+        let clienteEmail = item.cliente_email;
+        let obsFinal = item.observacao;
+
+        if (!clienteNome && item.observacao) {
           try {
-            const temp = JSON.parse(item.observacao);
-            return {
-              ...item,
-              cliente_nome: temp.temp_cliente_nome,
-              cliente_whatsapp: temp.temp_cliente_whatsapp,
-              cliente_email: temp.temp_cliente_email,
-              observacao: temp.observacao_cliente || ''
-            };
-          } catch (e) {
-            // Ignore parse errors
-          }
+            let temp: any = null;
+            if (typeof item.observacao === 'object' && item.observacao !== null) {
+              temp = item.observacao;
+            } else if (typeof item.observacao === 'string') {
+              temp = JSON.parse(item.observacao);
+            }
+            if (temp && temp.temp_cliente_nome) {
+              clienteNome = temp.temp_cliente_nome;
+              clienteWhatsapp = temp.temp_cliente_whatsapp || clienteWhatsapp;
+              clienteEmail = temp.temp_cliente_email || clienteEmail;
+              obsFinal = temp.observacao_cliente || '';
+            }
+          } catch (e) {}
         }
-        return item;
+
+        return {
+          ...item,
+          cliente_nome: clienteNome || 'Cliente',
+          cliente_whatsapp: clienteWhatsapp || '',
+          cliente_email: clienteEmail || '',
+          observacao: obsFinal
+        };
       });
 
       return { agendamentos: formattedAgendamentos };
