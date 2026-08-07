@@ -41,7 +41,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /var/www/acionar-v3/backend
-            npm install --production
+            npm install
             npx prisma generate
             npx prisma db push --accept-data-loss
             npm run build
