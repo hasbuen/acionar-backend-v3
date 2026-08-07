@@ -176,7 +176,6 @@ export class NotificationsService {
           confirmUrl: `/api/public/tenant/${tenantSlug}/agendamentos/${appointment.id}/confirmar-rapido?cliente_nome=${encodeURIComponent(nomeCliente || 'Cliente')}&whatsapp=${encodeURIComponent(cleanPhone || '')}`
         },
         actions: [
-          { action: 'confirm_whatsapp', title: '✅ Confirmar & WhatsApp' },
           { action: 'open_agenda', title: '📅 Ver na Agenda' }
         ]
       });
