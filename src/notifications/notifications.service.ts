@@ -124,9 +124,28 @@ export class NotificationsService {
 
       let subscriptions: any[] = [];
       try {
-        subscriptions = await this.prisma.$queryRawUnsafe(
-          'SELECT * FROM push_subscriptions WHERE (ativo = true OR ativo IS NULL)'
-        );
+        if (appointment.profissional_id) {
+          subscriptions = await this.prisma.$queryRawUnsafe(
+            `SELECT * FROM push_subscriptions 
+             WHERE (profissional_id = $1 OR profissional_id IS NULL) 
+               AND (ativo = true OR ativo IS NULL)`,
+            appointment.profissional_id
+          );
+        } else if (isDomicilio) {
+          // Se for agendamento a domicílio, enviar APENAS para os profissionais habilitados a atender a domicílio
+          subscriptions = await this.prisma.$queryRawUnsafe(
+            `SELECT DISTINCT s.* 
+             FROM push_subscriptions s
+             LEFT JOIN profissionais p ON s.profissional_id = p.id
+             WHERE (s.ativo = true OR s.ativo IS NULL)
+               AND (p.aceita_atendimento_externo = true OR s.profissional_id IS NULL)`
+          );
+        } else {
+          // Se for agendamento no estabelecimento, enviar para todos os dispositivos do tenant
+          subscriptions = await this.prisma.$queryRawUnsafe(
+            'SELECT * FROM push_subscriptions WHERE (ativo = true OR ativo IS NULL)'
+          );
+        }
       } catch (eSub) {
         console.error('[PUSH SUB FETCH ERROR]', eSub);
       }
