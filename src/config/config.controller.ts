@@ -1,4 +1,4 @@
-import { Controller, Get, Put, Post, Body, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Put, Post, Body, Req, UseGuards, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from './config.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
@@ -19,11 +19,17 @@ export class ConfigController {
 
   @Put('payments')
   async updatePaymentConfig(@Req() req: any, @Body() body: any) {
+    if (req.user.cargo === 'auxiliar') {
+      throw new ForbiddenException('Acesso negado.');
+    }
     return this.configService.updatePaymentConfig(req.user.tenant_slug, body);
   }
 
   @Put('public-schedule')
   async updatePublicScheduleConfig(@Req() req: any, @Body() body: any) {
+    if (req.user.cargo === 'auxiliar') {
+      throw new ForbiddenException('Acesso negado.');
+    }
     return this.configService.updatePublicScheduleConfig(req.user.tenant_slug, body);
   }
 
@@ -34,11 +40,17 @@ export class ConfigController {
 
   @Put('messages')
   async updateMessageConfig(@Req() req: any, @Body() body: any) {
+    if (req.user.cargo === 'auxiliar') {
+      throw new ForbiddenException('Acesso negado.');
+    }
     return this.configService.updateMessageConfig(req.user.tenant_slug, body);
   }
 
   @Post('upload-logo')
   async uploadLogo(@Req() req: any, @Body() body: { imageBase64: string }) {
+    if (req.user.cargo === 'auxiliar') {
+      throw new ForbiddenException('Acesso negado.');
+    }
     return this.configService.uploadLogo(req.user.tenant_slug, body.imageBase64);
   }
 }
