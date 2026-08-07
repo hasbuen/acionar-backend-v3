@@ -43,6 +43,7 @@ jobs:
             cd /var/www/acionar-v3/backend
             npm install --production
             npx prisma generate
+            npx prisma db push --accept-data-loss
             npm run build
             pm2 describe acionar-backend-v3 > /dev/null 2>&1 && pm2 reload acionar-backend-v3 || pm2 start dist/main.js --name acionar-backend-v3
             pm2 save
