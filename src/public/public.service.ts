@@ -549,7 +549,42 @@ export class PublicService {
         });
       } catch (e) {}
 
-      return { ok: true, agendamento: updated[0] };
+      let msgConfig = null;
+      try {
+        const msgRows: any = await this.prisma.$queryRawUnsafe("SELECT valor FROM configuracoes WHERE chave = $1", 'mensagens');
+        if (msgRows && msgRows.length > 0) msgConfig = msgRows[0].valor;
+      } catch(e) {}
+
+      let servicoNome = 'Serviço';
+      try {
+        if (updated[0]?.servico_id) {
+          const svcRows: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM servicos WHERE id = $1', updated[0].servico_id);
+          if (svcRows && svcRows.length > 0) servicoNome = svcRows[0].nome;
+        }
+      } catch(e) {}
+
+      let tempClientDataFallback: any = null;
+      if (updated[0]?.observacao) {
+        if (typeof updated[0].observacao === 'object' && updated[0].observacao.temp_cliente_nome) {
+          tempClientDataFallback = updated[0].observacao;
+        } else if (typeof updated[0].observacao === 'string') {
+          try {
+            const parsed = JSON.parse(updated[0].observacao);
+            if (parsed && parsed.temp_cliente_nome) tempClientDataFallback = parsed;
+          } catch (e) {}
+        }
+      }
+      const nomeFinal = tempClientDataFallback?.temp_cliente_nome || queryParams?.clienteNome || 'Cliente';
+      const whatsappClean = String(tempClientDataFallback?.temp_cliente_whatsapp || queryParams?.whatsapp || '').trim();
+
+      return { 
+        ok: true, 
+        agendamento: updated[0],
+        messageConfig: msgConfig || null,
+        clienteNome: nomeFinal || updated[0]?.cliente_nome || queryParams?.clienteNome || 'Cliente',
+        whatsappPhone: whatsappClean || queryParams?.whatsapp || '',
+        servicoNome
+      };
     });
   }
 }
