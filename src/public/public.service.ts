@@ -302,7 +302,7 @@ export class PublicService {
     }
   }
 
-  async confirmQuickAppointment(slug: string, appointmentId: number) {
+  async confirmQuickAppointment(slug: string, appointmentId: number, queryParams?: { clienteNome?: string; whatsapp?: string }) {
     const cleanSlug = slug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
     await this.prisma.ensureTenantSchema(cleanSlug);
 
@@ -317,18 +317,27 @@ export class PublicService {
 
       let newClienteId = agendamento.cliente_id;
 
-      if (!agendamento.cliente_id && agendamento.observacao) {
+      if (!agendamento.cliente_id) {
         try {
           let tempClientData: any = null;
-          if (typeof agendamento.observacao === 'object' && agendamento.observacao.temp_cliente_nome) {
-            tempClientData = agendamento.observacao;
-          } else if (typeof agendamento.observacao === 'string') {
-            const parsed = JSON.parse(agendamento.observacao);
-            if (parsed && parsed.temp_cliente_nome) tempClientData = parsed;
+          if (agendamento.observacao) {
+            if (typeof agendamento.observacao === 'object' && agendamento.observacao.temp_cliente_nome) {
+              tempClientData = agendamento.observacao;
+            } else if (typeof agendamento.observacao === 'string') {
+              try {
+                const parsed = JSON.parse(agendamento.observacao);
+                if (parsed && parsed.temp_cliente_nome) tempClientData = parsed;
+              } catch (e) {}
+            }
           }
 
-          if (tempClientData && tempClientData.temp_cliente_nome) {
-            const whatsappClean = String(tempClientData.temp_cliente_whatsapp || '').trim();
+          const fallbackNome = queryParams?.clienteNome || 'Cliente';
+          const fallbackWhatsapp = queryParams?.whatsapp || '';
+
+          const nomeFinal = tempClientData?.temp_cliente_nome || fallbackNome;
+          const whatsappClean = String(tempClientData?.temp_cliente_whatsapp || fallbackWhatsapp || '').trim();
+
+          if (nomeFinal) {
 
             let ruaVal = null;
             let numeroVal = null;
@@ -371,8 +380,8 @@ export class PublicService {
                      bairro = COALESCE($5, bairro),
                      complemento = COALESCE($6, complemento)
                  WHERE id = $7`,
-                tempClientData.temp_cliente_nome || 'Cliente',
-                tempClientData.temp_cliente_email || null,
+                nomeFinal,
+                tempClientData?.temp_cliente_email || null,
                 ruaVal || null,
                 numeroVal || null,
                 bairroVal || null,
@@ -391,9 +400,9 @@ export class PublicService {
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                  RETURNING id`,
                 targetProfId || null,
-                tempClientData.temp_cliente_nome || 'Cliente',
+                nomeFinal,
                 whatsappClean || null,
-                tempClientData.temp_cliente_email || null,
+                tempClientData?.temp_cliente_email || null,
                 ruaVal || null,
                 numeroVal || null,
                 bairroVal || null,

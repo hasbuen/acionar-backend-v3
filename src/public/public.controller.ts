@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Query } from '@nestjs/common';
 import { PublicService } from './public.service';
 
 @Controller('api/public')
@@ -26,8 +26,13 @@ export class PublicController {
   }
 
   @Post('tenant/:slug/agendamentos/:id/confirmar-rapido')
-  async confirmQuickAppointment(@Param('slug') slug: string, @Param('id') id: string) {
-    return this.publicService.confirmQuickAppointment(slug, parseInt(id, 10));
+  async confirmQuickAppointment(
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+    @Query('cliente_nome') clienteNome?: string,
+    @Query('whatsapp') whatsapp?: string,
+  ) {
+    return this.publicService.confirmQuickAppointment(slug, parseInt(id, 10), { clienteNome, whatsapp });
   }
 
   @Post('asaas-webhook')

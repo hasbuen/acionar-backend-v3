@@ -166,7 +166,7 @@ export class NotificationsService {
           servicoNome: appointment.servico_nome || 'Serviço',
           whatsapp: cleanPhone ? (cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`) : '',
           dataHoraFormatted,
-          confirmUrl: `/api/public/tenant/${tenantSlug}/agendamentos/${appointment.id}/confirmar-rapido`
+          confirmUrl: `/api/public/tenant/${tenantSlug}/agendamentos/${appointment.id}/confirmar-rapido?cliente_nome=${encodeURIComponent(nomeCliente || 'Cliente')}&whatsapp=${encodeURIComponent(cleanPhone || '')}`
         },
         actions: [
           { action: 'confirm_whatsapp', title: '✅ Confirmar & WhatsApp' },
