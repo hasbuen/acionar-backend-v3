@@ -144,7 +144,7 @@ export class PublicService {
       // 3. Create database notifications for apt professionals
       try {
         const profsAptos: any = await this.prisma.$queryRawUnsafe(
-          `SELECT p.id 
+          `SELECT p.id, p.aceita_atendimento_externo
            FROM profissionais p
            JOIN profissional_servicos ps ON ps.profissional_id = p.id
            WHERE p.ativo = true AND ps.servico_id = $1 AND ps.ativo = true`,
@@ -157,7 +157,15 @@ export class PublicService {
         const serviceName = servNameQuery[0]?.nome || 'Serviço';
         const msgText = `Nova solicitação: ${cliente_nome} agendou ${serviceName} para o dia ${dateFormatted} às ${timeFormatted}.`;
 
-        const targetProfs = profissional_id ? [{ id: profissional_id }] : profsAptos;
+        let targetProfs = [];
+        if (profissional_id) {
+          targetProfs = [{ id: profissional_id }];
+        } else if (tipo_atendimento === 'domicilio') {
+          targetProfs = profsAptos.filter((p: any) => p.aceita_atendimento_externo === true || String(p.aceita_atendimento_externo) === 'true');
+        } else {
+          targetProfs = profsAptos;
+        }
+
         for (const p of targetProfs) {
           await this.prisma.$queryRawUnsafe(
             `INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida)
