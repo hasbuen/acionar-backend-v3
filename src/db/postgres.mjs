@@ -51,6 +51,15 @@ export async function queryPublic(text, params = []) {
     await client.query('SET search_path TO public;');
     const res = await client.query(text, params);
     return res;
+  } catch (err) {
+    if (err.message && (err.message.includes('cor_texto_principal') || err.message.includes('cor_texto_secundario')) && err.message.includes('does not exist')) {
+      console.log('[AUTO-HEAL] Criando colunas cor_texto_principal e cor_texto_secundario na tabela tenants...');
+      await client.query(`ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS cor_texto_principal VARCHAR(10) DEFAULT '#ffffff';`);
+      await client.query(`ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS cor_texto_secundario VARCHAR(10) DEFAULT '#94a3b8';`);
+      const res = await client.query(text, params);
+      return res;
+    }
+    throw err;
   } finally {
     client.release();
   }
