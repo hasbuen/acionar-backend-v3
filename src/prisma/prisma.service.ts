@@ -160,12 +160,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
       await tenantClient.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS servicos (
-
           id SERIAL PRIMARY KEY,
           nome VARCHAR(100) NOT NULL,
           descricao TEXT,
           duracao_minutos INT DEFAULT 60,
           preco DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+          foto_url TEXT,
           ativo BOOLEAN DEFAULT true,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
@@ -178,9 +178,18 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           nome VARCHAR(100) NOT NULL,
           duracao_adicional_minutos INT DEFAULT 0,
           preco_adicional DECIMAL(10, 2) DEFAULT 0.00,
+          foto_url TEXT,
           ativo BOOLEAN DEFAULT true,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        ALTER TABLE servicos ADD COLUMN IF NOT EXISTS foto_url TEXT;
+      `);
+
+      await tenantClient.$executeRawUnsafe(`
+        ALTER TABLE subservicos ADD COLUMN IF NOT EXISTS foto_url TEXT;
       `);
 
       await tenantClient.$executeRawUnsafe(`

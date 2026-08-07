@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -192,6 +192,43 @@ export class ConfigService {
       message: 'Logo enviado com sucesso.',
       foto_url: fotoUrl,
       tenant,
+    };
+  }
+
+  async uploadImage(tenantSlug: string, type: 'servicos' | 'subservicos' | 'produtos', imageBase64: string) {
+    if (!['servicos', 'subservicos', 'produtos'].includes(type)) {
+      throw new BadRequestException('Tipo inválido.');
+    }
+
+    const cleanSlug = tenantSlug.toLowerCase().trim().replace(/[^a-z0-9_]/g, '_');
+    const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), 'uploads');
+    const targetDir = path.join(uploadsDir, type);
+
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    const matches = imageBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    let buffer: Buffer;
+    let ext = 'png';
+
+    if (matches && matches.length === 3) {
+      ext = matches[1].split('/')[1] || 'png';
+      buffer = Buffer.from(matches[2], 'base64');
+    } else {
+      buffer = Buffer.from(imageBase64, 'base64');
+    }
+
+    const fileKey = `${type.slice(0, -1)}_${cleanSlug}_${Date.now()}.${ext}`;
+    const filePath = path.join(targetDir, fileKey);
+    fs.writeFileSync(filePath, buffer);
+
+    const publicHost = process.env.PUBLIC_HOST;
+    const fotoUrl = publicHost ? `${publicHost}/uploads/${type}/${fileKey}` : `/uploads/${type}/${fileKey}`;
+
+    return {
+      message: 'Foto enviada com sucesso.',
+      foto_url: fotoUrl,
     };
   }
 }

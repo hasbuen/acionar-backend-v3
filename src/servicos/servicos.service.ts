@@ -119,20 +119,21 @@ export class ServicosService {
 
 
   async create(tenantSlug: string, user: any, dto: any) {
-    const { nome, descricao, duracao_minutos, preco, ativo } = dto;
+    const { nome, descricao, duracao_minutos, preco, ativo, foto_url } = dto;
     if (!nome || preco === undefined) throw new BadRequestException('Name and Price are required.');
 
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const res: any = await this.prisma.$queryRawUnsafe(
-        `INSERT INTO servicos (nome, descricao, duracao_minutos, preco, ativo, profissional_id)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        `INSERT INTO servicos (nome, descricao, duracao_minutos, preco, ativo, profissional_id, foto_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         nome,
         descricao || null,
         duracao_minutos || 60,
         preco,
         ativo !== undefined ? ativo : true,
         user.profissional_id,
+        foto_url || null,
       );
       return { servico: res[0] };
     });
@@ -154,8 +155,12 @@ export class ServicosService {
         throw new ForbiddenException(`Este serviço foi criado pelo profissional ${criador}.`);
       }
 
+      const { nome, descricao, duracao_minutos, preco, ativo, foto_url } = dto;
+      const hasFotoUrl = dto.hasOwnProperty('foto_url');
+      const params = [nome, descricao, duracao_minutos, preco, ativo];
+      if (hasFotoUrl) params.push(foto_url);
+      params.push(id);
 
-      const { nome, descricao, duracao_minutos, preco, ativo } = dto;
       const res: any = await this.prisma.$queryRawUnsafe(
         `UPDATE servicos
          SET nome = COALESCE($1, nome),
@@ -163,13 +168,9 @@ export class ServicosService {
              duracao_minutos = COALESCE($3, duracao_minutos),
              preco = COALESCE($4, preco),
              ativo = COALESCE($5, ativo)
-         WHERE id = $6 RETURNING *`,
-        nome,
-        descricao,
-        duracao_minutos,
-        preco,
-        ativo,
-        id,
+             ${hasFotoUrl ? ', foto_url = $6' : ''}
+         WHERE id = $${hasFotoUrl ? 7 : 6} RETURNING *`,
+        ...params
       );
 
       if (!res || res.length === 0) throw new NotFoundException('Service not found.');
@@ -250,20 +251,21 @@ export class ServicosService {
 
 
   async createSubservico(tenantSlug: string, user: any, servicoId: number, dto: any) {
-    const { nome, duracao_adicional_minutos, preco_adicional, ativo } = dto;
+    const { nome, duracao_adicional_minutos, preco_adicional, ativo, foto_url } = dto;
     if (!nome) throw new BadRequestException('Name is required for subservice.');
 
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const res: any = await this.prisma.$queryRawUnsafe(
-        `INSERT INTO subservicos (servico_id, nome, duracao_adicional_minutos, preco_adicional, ativo, profissional_id)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        `INSERT INTO subservicos (servico_id, nome, duracao_adicional_minutos, preco_adicional, ativo, profissional_id, foto_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         servicoId,
         nome,
         duracao_adicional_minutos || 0,
         preco_adicional || 0.00,
         ativo !== undefined ? ativo : true,
         user.profissional_id,
+        foto_url || null,
       );
       return { subservico: res[0] };
     });
@@ -285,20 +287,21 @@ export class ServicosService {
         throw new ForbiddenException(`Este subserviço foi criado pelo profissional ${criador}.`);
       }
 
+      const { nome, duracao_adicional_minutos, preco_adicional, ativo, foto_url } = dto;
+      const hasFotoUrl = dto.hasOwnProperty('foto_url');
+      const params = [nome, duracao_adicional_minutos, preco_adicional, ativo];
+      if (hasFotoUrl) params.push(foto_url);
+      params.push(subservicoId);
 
-      const { nome, duracao_adicional_minutos, preco_adicional, ativo } = dto;
       const res: any = await this.prisma.$queryRawUnsafe(
         `UPDATE subservicos
          SET nome = COALESCE($1, nome),
              duracao_adicional_minutos = COALESCE($2, duracao_adicional_minutos),
              preco_adicional = COALESCE($3, preco_adicional),
              ativo = COALESCE($4, ativo)
-         WHERE id = $5 RETURNING *`,
-        nome,
-        duracao_adicional_minutos,
-        preco_adicional,
-        ativo,
-        subservicoId,
+             ${hasFotoUrl ? ', foto_url = $5' : ''}
+         WHERE id = $${hasFotoUrl ? 6 : 5} RETURNING *`,
+        ...params
       );
 
       if (!res || res.length === 0) throw new NotFoundException('Subservice not found.');

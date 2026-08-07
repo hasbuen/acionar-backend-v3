@@ -53,5 +53,13 @@ export class ConfigController {
     }
     return this.configService.uploadLogo(req.user.tenant_slug, body.imageBase64);
   }
+
+  @Post('upload-image')
+  async uploadImage(
+    @Req() req: any,
+    @Body() body: { type: 'servicos' | 'subservicos' | 'produtos'; imageBase64: string }
+  ) {
+    return this.configService.uploadImage(req.user.tenant_slug, body.type, body.imageBase64);
+  }
 }
 
