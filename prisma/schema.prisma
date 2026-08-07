@@ -55,6 +55,7 @@ model Profissional {
   fluxos_caixa          FluxoCaixa[]
   estoque_produtos      EstoqueProduto[]
   estoque_movimentacoes EstoqueMovimentacao[]
+  clientes              Cliente[]
 
   @@map("profissionais")
   @@schema("tenant")
