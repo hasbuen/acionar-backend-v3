@@ -123,15 +123,12 @@ export class NotificationsService {
       bodyLines.push(`📱 WhatsApp: ${phoneFormatted}`);
 
       let subscriptions: any[] = [];
-      if (appointment.profissional_id) {
+      try {
         subscriptions = await this.prisma.$queryRawUnsafe(
-          'SELECT * FROM push_subscriptions WHERE profissional_id = $1 AND ativo = true',
-          appointment.profissional_id
+          'SELECT * FROM push_subscriptions WHERE (ativo = true OR ativo IS NULL)'
         );
-      } else {
-        subscriptions = await this.prisma.$queryRawUnsafe(
-          'SELECT * FROM push_subscriptions WHERE ativo = true'
-        );
+      } catch (eSub) {
+        console.error('[PUSH SUB FETCH ERROR]', eSub);
       }
 
       if (subscriptions.length === 0) return;
