@@ -18,8 +18,10 @@ jobs:
           node-version: 20
 
       - name: Install & Build Code
+        env:
+          DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/acionar_v3"
         run: |
-          npm ci || npm install
+          npm install --legacy-peer-deps
           npx prisma generate
           npm run build
 
