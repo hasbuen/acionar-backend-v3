@@ -68,6 +68,16 @@ export class NotificationsService {
       if (!apptRows || apptRows.length === 0) return;
       const appointment = apptRows[0];
 
+      let nomeCliente = appointment.cliente_nome;
+      if (!nomeCliente && appointment.observacao) {
+        try {
+          const obs = typeof appointment.observacao === 'object' ? appointment.observacao : JSON.parse(appointment.observacao);
+          if (obs && obs.temp_cliente_nome) {
+            nomeCliente = obs.temp_cliente_nome;
+          }
+        } catch (e) {}
+      }
+
       let subscriptions: any[] = [];
       if (appointment.profissional_id) {
         subscriptions = await this.prisma.$queryRawUnsafe(
@@ -83,7 +93,7 @@ export class NotificationsService {
       if (subscriptions.length === 0) return;
 
       const payload = JSON.stringify({
-        title: `Novo agendamento: ${appointment.cliente_nome || 'Cliente'}`,
+        title: `Novo agendamento: ${nomeCliente || 'Cliente'}`,
         body: `Serviço: ${appointment.servico_nome || 'Serviço'}\nData: ${new Date(appointment.data_hora).toLocaleString('pt-BR')}`,
         url: '/agenda',
         data: {
