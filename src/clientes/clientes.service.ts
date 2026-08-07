@@ -1,9 +1,13 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 
 @Injectable()
 export class ClientesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsGateway: NotificationsGateway,
+  ) {}
 
   async findAll(tenantSlug: string, user?: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
@@ -92,7 +96,7 @@ export class ClientesService {
     });
   }
 
-  async transferir(tenantSlug: string, id: number, profissionalDestinoId: number) {
+  async transferir(tenantSlug: string, id: number, profissionalDestinoId: number, user?: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const res: any = await this.prisma.$queryRawUnsafe(
@@ -101,7 +105,30 @@ export class ClientesService {
         id,
       );
       if (!res || res.length === 0) throw new NotFoundException('Cliente não encontrado.');
-      return { cliente: res[0], message: 'Cadastro do cliente transferido com sucesso.' };
+      
+      const cliente = res[0];
+      const nomeRemetente = user?.nome || 'Um colega';
+      const titulo = 'Cliente Transferido';
+      const mensagem = `O usuário ${nomeRemetente} transferiu o cadastro do cliente ${cliente.nome} para você.`;
+
+      const insertedNotif: any = await this.prisma.$queryRawUnsafe(
+        `INSERT INTO notificacoes (profissional_id, titulo, mensagem)
+         VALUES ($1, $2, $3)
+         RETURNING id, titulo, mensagem, lida, created_at`,
+        profissionalDestinoId,
+        titulo,
+        mensagem
+      );
+
+      if (insertedNotif && insertedNotif.length > 0) {
+        this.notificationsGateway.emitToUser(
+          profissionalDestinoId,
+          'notifications-changed',
+          { ...insertedNotif[0], profissional_id: profissionalDestinoId }
+        );
+      }
+
+      return { cliente, message: 'Cadastro do cliente transferido com sucesso.' };
     });
   }
 

@@ -1,10 +1,14 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsGateway } from '../notifications/notifications.gateway';
 
 
 @Injectable()
 export class EstoqueService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsGateway: NotificationsGateway,
+  ) {}
 
   async findProdutos(tenantSlug: string, user?: any) {
     await this.prisma.ensureTenantSchema(tenantSlug);
@@ -220,6 +224,28 @@ export class EstoqueService {
           produtoOrigem.imagem_url,
         );
         destProdId = newProd[0].id;
+      }
+
+      // Notification
+      const nomeRemetente = user?.nome || 'Um colega';
+      const titulo = 'Transferência de Estoque';
+      const mensagem = `O usuário ${nomeRemetente} transferiu ${qtyNum} unidades do produto ${produtoOrigem.nome} para o seu estoque.`;
+
+      const insertedNotif: any = await this.prisma.$queryRawUnsafe(
+        `INSERT INTO notificacoes (profissional_id, titulo, mensagem)
+         VALUES ($1, $2, $3)
+         RETURNING id, titulo, mensagem, lida, created_at`,
+        destProfId,
+        titulo,
+        mensagem
+      );
+
+      if (insertedNotif && insertedNotif.length > 0) {
+        this.notificationsGateway.emitToUser(
+          destProfId,
+          'notifications-changed',
+          { ...insertedNotif[0], profissional_id: destProfId }
+        );
       }
 
       // Registra movimentacao de entrada no destinatario

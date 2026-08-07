@@ -232,6 +232,26 @@ export class AgendamentosService {
         id,
       );
 
+      // Notification for transfer
+      if (finalProfId && finalProfId !== agendamento.profissional_id && finalProfId !== user?.profissional_id) {
+        const nomeRemetente = user?.nome || 'Um colega';
+        let clienteNome = 'um cliente';
+        if (finalClienteId) {
+          const cRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM clientes WHERE id = $1', finalClienteId);
+          if (cRes && cRes.length > 0) clienteNome = cRes[0].nome;
+        }
+        
+        const titulo = 'Agendamento Recebido';
+        const mensagem = `O usuário ${nomeRemetente} transferiu um agendamento com o cliente ${clienteNome} para a sua agenda.`;
+        
+        const insertedNotif: any = await this.prisma.$queryRawUnsafe(
+          `INSERT INTO notificacoes (profissional_id, titulo, mensagem) VALUES ($1, $2, $3) RETURNING id, titulo, mensagem, lida, created_at`,
+          finalProfId, titulo, mensagem
+        );
+        if (insertedNotif && insertedNotif.length > 0) {
+          this.notificationsGateway.emitToUser(finalProfId, 'notifications-changed', { ...insertedNotif[0], profissional_id: finalProfId });
+        }
+      }
 
       // Se status mudou para "concluido", consumir produtos
       if (status === 'concluido' && agendamento.status !== 'concluido' && !agendamento.estoque_consumido) {

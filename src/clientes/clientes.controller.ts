@@ -26,7 +26,7 @@ export class ClientesController {
 
   @Post(':id/transferir')
   async transferir(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.clientesService.transferir(req.user.tenant_slug, parseInt(id, 10), body.profissional_destino_id);
+    return this.clientesService.transferir(req.user.tenant_slug, parseInt(id, 10), body.profissional_destino_id, req.user);
   }
 
   @Delete(':id')
