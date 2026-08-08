@@ -138,6 +138,8 @@ export class WhatsappService {
           instanceName,
           qrcode: true,
           integration: 'WHATSAPP-BAILEYS',
+          clientName: 'Acionar',
+          browser: 'Chrome'
         }),
       });
 
