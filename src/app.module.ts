@@ -14,6 +14,8 @@ import { ProfissionaisModule } from './profissionais/profissionais.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { AvaliacoesModule } from './avaliacoes/avaliacoes.module';
+import { AuditModule } from './audit/audit.module';
+import { SuporteModule } from './suporte/suporte.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -33,6 +35,8 @@ import { AppController } from './app.controller';
     NotificationsModule,
     WhatsappModule,
     AvaliacoesModule,
+    AuditModule,
+    SuporteModule,
   ],
   controllers: [AppController],
 })

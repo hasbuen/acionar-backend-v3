@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install & Build Code
+      - name: Install & Build Verification
         env:
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/acionar_v3"
         run: |
@@ -25,17 +25,7 @@ jobs:
           npx prisma generate
           npm run build
 
-      - name: Deploy to VPS via SSH
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: "76.13.230.110"
-          username: root
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "."
-          target: "/var/www/acionar-v3/backend"
-          strip_components: 0
-
-      - name: Restart Application via SSH
+      - name: Deploy & Restart Backend via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: "76.13.230.110"
@@ -43,6 +33,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /var/www/acionar-v3/backend
+            git pull origin main
             npm install --legacy-peer-deps
             npx prisma generate
             npx prisma db push --accept-data-loss
