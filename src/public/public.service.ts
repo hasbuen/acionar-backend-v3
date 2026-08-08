@@ -314,41 +314,6 @@ export class PublicService {
         console.error('[SOCKET BROADCAST ERROR]', socketErr);
       }
 
-      // 4. Send WhatsApp confirmation request
-      try {
-        const msgConfigRows: any = await this.prisma.$queryRawUnsafe(
-          "SELECT valor FROM configuracoes WHERE chave = $1", 
-          'mensagens'
-        );
-        const settings = msgConfigRows[0]?.valor || {
-          endereco: 'Rua da amizade 515 bairro: 14 de novembro',
-          template_confirmacao: `📍 *Endereço*: {endereco}\n\nPor gentileza, informe se concorda com este horário ou se prefere realizar alguma alteração.\n\n📌 *Lembrete importante*: Pedimos a gentileza de chegar com **15 minutos de antecedência**.\n\nAgradecemos a preferência e aguardamos você!😊`
-        };
-
-        const dateFormatted = new Date(data_hora).toLocaleDateString('pt-BR');
-        const timeFormatted = new Date(data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-        
-        let servNameQuery: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM servicos WHERE id = $1', servico_id);
-        const serviceName = servNameQuery[0]?.nome || 'Serviço';
-
-        const intro = `Olá, *${cliente_nome}*! 👋\n\nSeu agendamento para *${serviceName}* no dia *${dateFormatted}* às *${timeFormatted}* foi solicitado com sucesso!\n\nPor favor, confirme respondendo apenas:\n👉 *1* para *Confirmar*\n👉 *2* para *Cancelar*\n\n`;
-
-        let template = settings.template_confirmacao || '';
-        template = template.replace(/{endereco}/g, settings.endereco || '');
-        template = template.replace(/{cliente}/g, cliente_nome);
-        template = template.replace(/{servico}/g, serviceName);
-        template = template.replace(/{data}/g, dateFormatted);
-        template = template.replace(/{hora}/g, timeFormatted);
-
-        const fullMessage = `${intro}${template}`;
-
-        this.whatsappService.sendTextMessage(cleanSlug, cliente_whatsapp, fullMessage)
-          .then(res => console.log(`[WHATSAPP CONFIRM DISPATCH] Success: ${res.success}`))
-          .catch(err => console.error('[WHATSAPP CONFIRM DISPATCH ERROR]', err));
-      } catch (waErr) {
-        console.error('[WHATSAPP TRIGGER ERROR]', waErr);
-      }
-
       return {
         message: 'Appointment requested successfully.',
         agendamento: apptRes[0],

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 
 
 @Injectable()
@@ -10,6 +11,7 @@ export class AgendamentosService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly notificationsGateway: NotificationsGateway,
+    private readonly whatsappService: WhatsappService,
   ) {}
 
   async findAll(tenantSlug: string, user: any, query: any) {
@@ -437,6 +439,72 @@ export class AgendamentosService {
       const isAccepted = ['agendado', 'confirmado'].includes(updatedAg.status);
 
       if (wasPending && isAccepted) {
+        // Disparar a mensagem do WhatsApp para o cliente quando o agendamento é aceito pelo usuário autenticado
+        try {
+          let targetClientPhone = '';
+          let targetClientName = '';
+
+          if (updatedAg.cliente_id) {
+            const clRes: any = await this.prisma.$queryRawUnsafe(
+              'SELECT nome, whatsapp FROM clientes WHERE id = $1',
+              updatedAg.cliente_id,
+            );
+            if (clRes && clRes.length > 0) {
+              targetClientName = clRes[0].nome;
+              targetClientPhone = clRes[0].whatsapp || '';
+            }
+          }
+          if (!targetClientPhone && tempClientData) {
+            targetClientName = tempClientData.temp_cliente_nome || 'Cliente';
+            targetClientPhone = tempClientData.temp_cliente_whatsapp || '';
+          }
+
+          if (targetClientPhone) {
+            const flowRows: any = await this.prisma.$queryRawUnsafe("SELECT valor FROM configuracoes WHERE chave = $1", 'bot_flow');
+            const msgConfigRows: any = await this.prisma.$queryRawUnsafe("SELECT valor FROM configuracoes WHERE chave = $1", 'mensagens');
+            
+            const msgSettings = msgConfigRows[0]?.valor || {};
+            const botFlow = flowRows[0]?.valor || null;
+
+            const dateFormatted = new Date(updatedAg.data_hora).toLocaleDateString('pt-BR');
+            const timeFormatted = new Date(updatedAg.data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            
+            let servName = 'Serviço';
+            if (updatedAg.servico_id) {
+              const sRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM servicos WHERE id = $1', updatedAg.servico_id);
+              if (sRes && sRes.length > 0) servName = sRes[0].nome;
+            }
+
+            let profName = 'Profissional';
+            if (updatedAg.profissional_id) {
+              const pRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM profissionais WHERE id = $1', updatedAg.profissional_id);
+              if (pRes && pRes.length > 0) profName = pRes[0].nome;
+            }
+
+            let messageText = '';
+            const msgNode = botFlow?.nodes?.find((n: any) => n.type === 'send_message');
+            if (msgNode && msgNode.config?.text) {
+              messageText = msgNode.config.text;
+            } else {
+              messageText = `Olá, *{cliente}*! 👋\n\nSeu agendamento para *{servico}* no dia *{data}* às *{hora}* com *{profissional}* foi aceite e confirmado pelo estabelecimento!\n\n📍 *Endereço*: {endereco}\n\nPor favor, confirme se concorda digitando:\n👉 *1* para *Confirmar*\n👉 *2* para *Cancelar*`;
+            }
+
+            messageText = messageText
+              .replace(/{cliente}/g, targetClientName || 'Cliente')
+              .replace(/{servico}/g, servName)
+              .replace(/{data}/g, dateFormatted)
+              .replace(/{hora}/g, timeFormatted)
+              .replace(/{profissional}/g, profName)
+              .replace(/{endereco}/g, msgSettings.endereco || 'nosso estabelecimento');
+
+            this.whatsappService.sendTextMessage(tenantSlug, targetClientPhone, messageText)
+              .then(res => console.log(`[WHATSAPP ACCEPTED DISPATCH] Success: ${res.success}`))
+              .catch(err => console.error('[WHATSAPP ACCEPTED DISPATCH ERROR]', err));
+          }
+        } catch (waErr) {
+          console.error('[WHATSAPP ACCEPTED TRIGGER ERROR]', waErr);
+        }
+
         try {
           let clientName = '';
           if (updatedAg.cliente_id) {
