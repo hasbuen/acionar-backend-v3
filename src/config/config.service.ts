@@ -158,6 +158,77 @@ export class ConfigService {
     });
   }
 
+  async getBotFlow(tenantSlug: string) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const rows: any = await this.prisma.$queryRawUnsafe('SELECT valor FROM configuracoes WHERE chave = $1', 'bot_flow');
+      const defaultFlow = {
+        nodes: [
+          {
+            id: 'node-trigger',
+            type: 'trigger',
+            title: 'Novo Agendamento Criado',
+            description: 'Disparado quando o cliente solicita um agendamento no portal público',
+            config: { event: 'booking_created' }
+          },
+          {
+            id: 'node-msg-1',
+            type: 'send_message',
+            title: 'Enviar Confirmação',
+            config: {
+              text: 'Olá, *{cliente}*! 👋\n\nRecebemos sua solicitação para *{servico}* no dia *{data}* às *{hora}* com *{profissional}*.\n\n📍 *Endereço*: {endereco}\n\nPor favor, responda com uma das opções abaixo:\n\n1️⃣ Digite *1* para **Confirmar**\n2️⃣ Digite *2* para **Cancelar**'
+            }
+          },
+          {
+            id: 'node-options',
+            type: 'options',
+            title: 'Aguardar Resposta do Cliente',
+            config: {
+              options: [
+                { key: '1', label: 'Confirmar Agendamento', nextNodeId: 'node-action-confirm' },
+                { key: '2', label: 'Cancelar Agendamento', nextNodeId: 'node-action-cancel' }
+              ],
+              fallbackText: 'Desculpe, não entendi. Digite *1* para Confirmar ou *2* para Cancelar o agendamento.'
+            }
+          },
+          {
+            id: 'node-action-confirm',
+            type: 'action',
+            title: 'Confirmar Agendamento',
+            config: {
+              actionType: 'confirm_booking',
+              responseText: '✅ *Agendamento Confirmado!* Muito obrigado, estamos te aguardando no horário agendado! 😊'
+            }
+          },
+          {
+            id: 'node-action-cancel',
+            type: 'action',
+            title: 'Cancelar Agendamento',
+            config: {
+              actionType: 'cancel_booking',
+              responseText: '❌ *Agendamento Cancelado.* Se precisar remarcar futuramente, ficamos à disposição!'
+            }
+          }
+        ]
+      };
+      const flow = rows[0]?.valor || defaultFlow;
+      return { flow };
+    });
+  }
+
+  async updateBotFlow(tenantSlug: string, flowData: any) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const flow = flowData.flow || flowData;
+      await this.prisma.$executeRawUnsafe(
+        'INSERT INTO configuracoes (chave, valor, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()',
+        'bot_flow',
+        JSON.stringify(flow),
+      );
+      return { message: 'Fluxo do Chatbot salvo com sucesso.', flow };
+    });
+  }
+
   private getUploadsDir(): string {
     if (process.env.UPLOADS_DIR) return process.env.UPLOADS_DIR;
     if (fs.existsSync('/var/www/acionar-v3/uploads')) return '/var/www/acionar-v3/uploads';

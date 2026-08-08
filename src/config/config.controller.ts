@@ -46,6 +46,19 @@ export class ConfigController {
     return this.configService.updateMessageConfig(req.user.tenant_slug, body);
   }
 
+  @Get('bot-flow')
+  async getBotFlow(@Req() req: any) {
+    return this.configService.getBotFlow(req.user.tenant_slug);
+  }
+
+  @Put('bot-flow')
+  async updateBotFlow(@Req() req: any, @Body() body: any) {
+    if (req.user.cargo === 'auxiliar') {
+      throw new ForbiddenException('Acesso negado.');
+    }
+    return this.configService.updateBotFlow(req.user.tenant_slug, body);
+  }
+
   @Post('upload-logo')
   async uploadLogo(@Req() req: any, @Body() body: { imageBase64: string }) {
     if (req.user.cargo === 'auxiliar') {
