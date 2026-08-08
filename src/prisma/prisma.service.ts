@@ -365,6 +365,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         WHERE ativo = true;
       `);
 
+      await tenantClient.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS avaliacoes (
+          id SERIAL PRIMARY KEY,
+          agendamento_id INT UNIQUE NOT NULL REFERENCES agendamentos(id) ON DELETE CASCADE,
+          nota INT NOT NULL CHECK (nota >= 1 AND nota <= 5),
+          comentario VARCHAR(500),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+
 
     } catch (err) {
       console.error(`[DATABASE MULTI-TENANT] Falha crítica de migração DDL no banco ${dbName}:`, err.message);

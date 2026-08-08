@@ -515,6 +515,13 @@ export class AgendamentosService {
         await this.consumirProdutosAgendamento(tenantSlug, agendamento, profissional_id || agendamento.profissional_id);
       }
 
+      // Se status mudou para "concluido", disparar pesquisa de satisfação
+      if (status === 'concluido' && agendamento.status !== 'concluido') {
+        this.enviarPesquisaSatisfacao(tenantSlug, id).catch(err => {
+          console.error(`[PESQUISA SATISFACAO ERROR] agendamento ${id}:`, err.message);
+        });
+      }
+
       // Criar notificações em-app para outros profissionais no caso de aceite de solicitação
       const updatedAg = res[0];
       const wasPending = agendamento && ['aguardando_confirmacao', 'solicitado', 'pendente'].includes(agendamento.status);
@@ -900,6 +907,62 @@ export class AgendamentosService {
       }
       
       return { pixKey, paymentLink, valorFinal: valorFinalStr };
+    });
+  }
+
+  async enviarPesquisaSatisfacao(tenantSlug: string, agendamentoId: number): Promise<void> {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      // 1. Obter agendamento, cliente e serviço
+      const apptQuery: any = await this.prisma.$queryRawUnsafe(
+        `SELECT a.id, a.cliente_id, a.observacao, c.nome as cliente_nome, c.whatsapp as cliente_whatsapp, s.nome as servico_nome
+         FROM agendamentos a
+         LEFT JOIN clientes c ON a.cliente_id = c.id
+         LEFT JOIN servicos s ON a.servico_id = s.id
+         WHERE a.id = $1`,
+        agendamentoId
+      );
+
+      if (!apptQuery || apptQuery.length === 0) return;
+      const appt = apptQuery[0];
+
+      let clienteNome = appt.cliente_nome;
+      let clienteWhatsapp = appt.cliente_whatsapp;
+
+      // Fallback para cliente temporário
+      if (!appt.cliente_id && appt.observacao) {
+        try {
+          const obs = typeof appt.observacao === 'object' ? appt.observacao : JSON.parse(appt.observacao);
+          if (obs && obs.temp_cliente_nome) clienteNome = obs.temp_cliente_nome;
+          if (obs && obs.temp_cliente_whatsapp) clienteWhatsapp = obs.temp_cliente_whatsapp;
+        } catch (e) {}
+      }
+
+      if (!clienteWhatsapp) {
+        console.warn(`[PESQUISA SATISFACAO SKIP] Agendamento ${agendamentoId} não possui whatsapp do cliente.`);
+        return;
+      }
+
+      const cleanPhone = String(clienteWhatsapp).replace(/\D/g, '');
+      if (!cleanPhone) return;
+
+      const servName = appt.servico_nome || 'atendimento';
+      const feedbackUrl = process.env.NODE_ENV === 'production'
+        ? `https://${tenantSlug}.acionar.online/avaliar/${tenantSlug}/${agendamentoId}`
+        : `http://localhost:5173/avaliar/${tenantSlug}/${agendamentoId}`;
+
+      const messageText = `Olá, *${clienteNome || 'Cliente'}*! Seu agendamento de *${servName}* foi concluído com sucesso. ✅\n\n` +
+        `Para continuarmos melhorando nossos serviços, gostaríamos muito de saber como foi sua experiência! ⭐\n\n` +
+        `Poderia avaliar nosso atendimento em menos de 1 minuto?\n` +
+        `Acesse o link: ${feedbackUrl}\n\n` +
+        `Obrigado! 🙏`;
+
+      try {
+        await this.whatsappService.sendTextMessage(tenantSlug, cleanPhone, messageText);
+        console.log(`[PESQUISA SATISFACAO SENT] WhatsApp enviado para o cliente ${clienteNome} no número ${cleanPhone}`);
+      } catch (err) {
+        console.error(`[PESQUISA SATISFACAO FAIL] Erro ao enviar WhatsApp da pesquisa:`, err);
+      }
     });
   }
 }

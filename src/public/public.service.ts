@@ -736,5 +736,83 @@ export class PublicService {
       return { ok: true, appointmentId: agendamento.id, status: novoStatus };
     });
   }
+
+  async getEvaluationStatus(tenantSlug: string, id: number) {
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const apptRows: any = await this.prisma.$queryRawUnsafe(
+        `SELECT a.id, a.status, a.observacao, a.cliente_id, c.nome as cliente_nome, p.nome as profissional_nome, s.nome as servico_nome
+         FROM agendamentos a
+         LEFT JOIN clientes c ON a.cliente_id = c.id
+         LEFT JOIN profissionais p ON a.profissional_id = p.id
+         LEFT JOIN servicos s ON a.servico_id = s.id
+         WHERE a.id = $1`,
+        id
+      );
+
+      if (!apptRows || apptRows.length === 0) {
+        return { eligible: false, message: 'Agendamento não encontrado.' };
+      }
+
+      const appt = apptRows[0];
+
+      let clienteNome = appt.cliente_nome;
+      if (!appt.cliente_id && appt.observacao) {
+        try {
+          const obs = typeof appt.observacao === 'object' ? appt.observacao : JSON.parse(appt.observacao);
+          if (obs && obs.temp_cliente_nome) {
+            clienteNome = obs.temp_cliente_nome;
+          }
+        } catch (e) {}
+      }
+
+      // Verificar se já foi avaliado
+      const evalRows: any = await this.prisma.$queryRawUnsafe(
+        'SELECT id FROM avaliacoes WHERE agendamento_id = $1',
+        id
+      );
+
+      const jaAvaliado = evalRows && evalRows.length > 0;
+
+      return {
+        eligible: appt.status === 'concluido' && !jaAvaliado,
+        cliente_nome: clienteNome || 'Cliente',
+        profissional_nome: appt.profissional_nome || 'Profissional',
+        servico_nome: appt.servico_nome || 'Atendimento',
+        ja_avaliado: jaAvaliado,
+        status: appt.status
+      };
+    });
+  }
+
+  async submitEvaluation(tenantSlug: string, id: number, body: any) {
+    const { nota, comentario } = body;
+    if (!nota || nota < 1 || nota > 5) {
+      throw new BadRequestException('A nota deve ser entre 1 e 5.');
+    }
+
+    await this.prisma.ensureTenantSchema(tenantSlug);
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      // 1. Verificar elegibilidade
+      const statusCheck = await this.getEvaluationStatus(tenantSlug, id);
+      if (!statusCheck.eligible) {
+        throw new BadRequestException(
+          statusCheck.ja_avaliado
+            ? 'Este agendamento já foi avaliado.'
+            : 'Este agendamento não está qualificado para avaliação.'
+        );
+      }
+
+      // 2. Inserir a avaliação
+      await this.prisma.$executeRawUnsafe(
+        'INSERT INTO avaliacoes (agendamento_id, nota, comentario) VALUES ($1, $2, $3)',
+        id,
+        parseInt(nota, 10),
+        comentario || null
+      );
+
+      return { success: true, message: 'Avaliação enviada com sucesso! Obrigado pelo feedback.' };
+    });
+  }
 }
 

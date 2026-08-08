@@ -136,6 +136,7 @@ model Agendamento {
   servico      Servico?      @relation(fields: [servico_id], references: [id], onDelete: SetNull)
   subservico   Subservico?   @relation(fields: [subservico_id], references: [id], onDelete: SetNull)
   fluxos_caixa FluxoCaixa[]
+  avaliacao    Avaliacao?
 
   @@map("agendamentos")
   @@schema("tenant")
@@ -226,5 +227,18 @@ model SubservicoProduto {
 
   @@unique([subservico_id, produto_id])
   @@map("subservico_produtos")
+  @@schema("tenant")
+}
+
+model Avaliacao {
+  id             Int         @id @default(autoincrement())
+  agendamento_id Int         @unique
+  nota           Int
+  comentario     String?     @db.VarChar(500)
+  created_at     DateTime    @default(now()) @db.Timestamptz
+
+  agendamento    Agendamento @relation(fields: [agendamento_id], references: [id], onDelete: Cascade)
+
+  @@map("avaliacoes")
   @@schema("tenant")
 }

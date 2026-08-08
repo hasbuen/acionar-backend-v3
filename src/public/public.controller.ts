@@ -44,4 +44,21 @@ export class PublicController {
   async handleWhatsappWebhook(@Body() body: any) {
     return this.publicService.handleWhatsappWebhook(body);
   }
+
+  @Get('tenant/:slug/agendamentos/:id/avaliacao-status')
+  async getPublicAppointmentEvaluationStatus(
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+  ) {
+    return this.publicService.getEvaluationStatus(slug, parseInt(id, 10));
+  }
+
+  @Post('tenant/:slug/agendamentos/:id/avaliar')
+  async submitPublicAppointmentEvaluation(
+    @Param('slug') slug: string,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.publicService.submitEvaluation(slug, parseInt(id, 10), body);
+  }
 }
