@@ -296,11 +296,22 @@ export class PublicService {
             console.error('[DB NOTIFICATION INSERT ERROR]', notifDbErr);
           }
 
-          // Notificar via WhatsApp em bloco assíncrono 100% isolado (Se o WhatsApp falhar/desconectar, NÃO afeta as notificações do celular)
+          // Notificar via WhatsApp em bloco assíncrono 100% isolado
           (async () => {
             try {
-              const pRes: any = await this.prisma.$queryRawUnsafe('SELECT whatsapp FROM profissionais WHERE id = $1', p.id);
-              const profWhatsapp = pRes[0]?.whatsapp;
+              const pRes: any = await this.prisma.$queryRawUnsafe('SELECT whatsapp, telefone FROM profissionais WHERE id = $1', p.id);
+              let profWhatsapp = pRes[0]?.whatsapp || pRes[0]?.telefone;
+
+              // Fallback: se o profissional não tiver telefone no perfil, envia para o WhatsApp do proprietário
+              if (!profWhatsapp) {
+                const ownerRes: any = await this.prisma.$queryRawUnsafe(
+                  "SELECT whatsapp, telefone FROM profissionais WHERE cargo = 'proprietario' LIMIT 1"
+                );
+                if (ownerRes && ownerRes.length > 0) {
+                  profWhatsapp = ownerRes[0]?.whatsapp || ownerRes[0]?.telefone;
+                }
+              }
+
               if (profWhatsapp) {
                 let customTemplate: string | null = null;
                 try {
@@ -333,10 +344,13 @@ export class PublicService {
                     `\n*Acesse o aplicativo Acionar para Aceitar ou Recusar.*`;
                 }
 
-                await this.whatsappService.sendTextMessage(cleanSlug, profWhatsapp, profWaMsg);
+                const resSend = await this.whatsappService.sendTextMessage(cleanSlug, profWhatsapp, profWaMsg);
+                console.log(`[WHATSAPP PROF DISPATCH RESULT] for prof ${p.id} (phone: ${profWhatsapp}):`, resSend);
+              } else {
+                console.warn(`[WHATSAPP DISPATCH SKIP] No phone number registered for professional ${p.id} or owner.`);
               }
             } catch (waProfErr) {
-              console.warn('[WHATSAPP DISPATCH IGNORED - WA DISCONNECTED OR DOWN]', waProfErr);
+              console.warn('[WHATSAPP DISPATCH ERROR]', waProfErr);
             }
           })();
         }
