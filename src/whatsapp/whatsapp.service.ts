@@ -130,7 +130,7 @@ export class WhatsappService {
         // Ignorar se a instância não existia ainda
       }
 
-      // 3. Criar a instância 100% limpa com novo QR Code
+      // 3. Criar a instância 100% limpa com novo QR Code e sem sincronização de histórico pesado (conexão ultra-estável)
       const createResponse = await fetch(`${this.apiUrl}/instance/create`, {
         method: 'POST',
         headers: this.getHeaders(),
@@ -139,7 +139,10 @@ export class WhatsappService {
           qrcode: true,
           integration: 'WHATSAPP-BAILEYS',
           clientName: 'Acionar',
-          browser: 'Chrome'
+          browser: 'Chrome',
+          syncFullHistory: false,
+          readMessages: false,
+          readStatus: false,
         }),
       });
 
@@ -212,7 +215,7 @@ export class WhatsappService {
     }
   }
 
-  async sendTextMessage(tenantSlug: string, phone: string, text: string) {
+  async sendTextMessage(tenantSlug: string, phone: string, text: string, isRetry = false) {
     const instanceName = `tenant_${tenantSlug}`;
     // Limpar o número do telefone (deve conter apenas dígitos, ex: 5511999999999)
     const cleanPhone = String(phone).replace(/\D/g, '');
@@ -233,6 +236,20 @@ export class WhatsappService {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         this.logger.error(`Erro ao enviar mensagem de WhatsApp (${response.status}):`, errorData);
+
+        // Se a conexão foi fechada (428/401), tenta reconectar e reenviar automaticamente
+        if ((response.status === 428 || response.status === 401) && !isRetry) {
+          this.logger.warn(`[WHATSAPP AUTO RECONNECT] Solicitando reconexão da sessão ${instanceName}...`);
+          try {
+            await fetch(`${this.apiUrl}/instance/connect/${instanceName}`, {
+              method: 'GET',
+              headers: this.getHeaders(),
+            });
+            await new Promise(r => setTimeout(r, 2000));
+            return this.sendTextMessage(tenantSlug, phone, text, true);
+          } catch (eRetry) {}
+        }
+
         return { success: false, status: response.status, error: errorData };
       }
 
