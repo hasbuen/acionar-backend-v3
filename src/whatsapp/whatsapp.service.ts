@@ -56,10 +56,10 @@ export class WhatsappService {
 
       const createData = await createResponse.json();
 
-      // Se a instância já existir, a Evolution API v2 retorna um erro ou sucesso, mas podemos prosseguir para buscar o QR Code
-      if (createData?.qrcode?.code) {
+      const createQr = createData?.qrcode?.base64 || createData?.base64;
+      if (createQr) {
         return {
-          qrcode: createData.qrcode.code,
+          qrcode: createQr,
           state: 'connecting',
         };
       }
@@ -71,9 +71,10 @@ export class WhatsappService {
       });
 
       const connectData = await connectResponse.json();
-      if (connectData?.code) {
+      const connectQr = connectData?.qrcode?.base64 || connectData?.base64;
+      if (connectQr) {
         return {
-          qrcode: connectData.code,
+          qrcode: connectQr,
           state: 'connecting',
         };
       }
