@@ -13,12 +13,22 @@ export class WhatsappController {
   }
 
   @Get('connect')
-  async connect(@Req() req: any) {
+  async connectGet(@Req() req: any) {
     return this.whatsappService.connect(req.user.tenant_slug);
   }
 
+  @Post('connect')
+  async connectPost(@Req() req: any) {
+    return this.whatsappService.connect(req.user.tenant_slug);
+  }
+
+  @Get('disconnect')
+  async disconnectGet(@Req() req: any) {
+    return this.whatsappService.disconnect(req.user.tenant_slug);
+  }
+
   @Post('disconnect')
-  async disconnect(@Req() req: any) {
+  async disconnectPost(@Req() req: any) {
     return this.whatsappService.disconnect(req.user.tenant_slug);
   }
 }

@@ -32,6 +32,57 @@ export class WhatsappService {
       const state = data?.instance?.state || 'close';
 
       let qrcode: string | null = null;
+      let number: string | null = null;
+      let connectedSince: string | null = null;
+
+      if (state === 'open') {
+        try {
+          const fetchRes = await fetch(`${this.apiUrl}/instance/fetchInstances?instanceName=${instanceName}`, {
+            method: 'GET',
+            headers: this.getHeaders(),
+          });
+          if (fetchRes.ok) {
+            const instances = await fetchRes.json();
+            const inst = Array.isArray(instances) ? instances.find((i: any) => i.name === instanceName || i.instance?.instanceName === instanceName) : instances;
+            const ownerJid = inst?.ownerJid || inst?.instance?.ownerJid;
+            if (ownerJid) {
+              number = ownerJid.split('@')[0];
+            }
+            connectedSince = inst?.updatedAt || inst?.updated_at || inst?.createdAt;
+          }
+        } catch (e) {}
+
+        let savedVal: any = {};
+        try {
+          await this.prisma.ensureTenantSchema(tenantSlug);
+          await this.prisma.runInTenantSchema(tenantSlug, async () => {
+            const rows: any = await this.prisma.$queryRawUnsafe("SELECT valor FROM configuracoes WHERE chave = 'whatsapp'");
+            const currentVal = rows[0]?.valor || {};
+            if (!currentVal.connected_since) {
+              currentVal.connected_since = new Date().toISOString();
+            }
+            if (number) currentVal.number = number;
+            currentVal.connected = true;
+            currentVal.updated_at = new Date().toISOString();
+
+            await this.prisma.$executeRawUnsafe(
+              "INSERT INTO configuracoes (chave, valor, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, updated_at = NOW()",
+              'whatsapp',
+              JSON.stringify(currentVal)
+            );
+            savedVal = currentVal;
+          });
+        } catch (e) {}
+
+        return {
+          connected: true,
+          state: 'open',
+          qrcode: null,
+          number: savedVal.number || number,
+          connected_since: savedVal.connected_since || connectedSince,
+        };
+      }
+
       if (state === 'connecting') {
         try {
           const connectResponse = await fetch(`${this.apiUrl}/instance/connect/${instanceName}`, {
@@ -46,7 +97,7 @@ export class WhatsappService {
       }
 
       return {
-        connected: state === 'open',
+        connected: false,
         state,
         qrcode,
       };
