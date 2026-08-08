@@ -288,6 +288,26 @@ export class PublicService {
             notifTitle,
             msgText
           );
+
+          // Notificar diretamente no WhatsApp do profissional cadastrado
+          try {
+            const pRes: any = await this.prisma.$queryRawUnsafe('SELECT whatsapp FROM profissionais WHERE id = $1', p.id);
+            const profWhatsapp = pRes[0]?.whatsapp;
+            if (profWhatsapp) {
+              const profWaMsg = `🔔 *Novo Agendamento Solicitado!*\n\n` +
+                `Cliente: *${cliente_nome}*\n` +
+                `Serviço: *${serviceName}*\n` +
+                `Data: *${dateFormatted}* às *${timeFormatted}*\n` +
+                (endStr ? `📍 Endereço: *${endStr}*\n` : '') +
+                `\nAcesse o PWA Acionar para **Aceitar** ou **Recusar** esta solicitação.`;
+
+              this.whatsappService.sendTextMessage(cleanSlug, profWhatsapp, profWaMsg)
+                .then(res => console.log(`[WHATSAPP PROF DISPATCH] Success for prof ${p.id}: ${res.success}`))
+                .catch(err => console.error(`[WHATSAPP PROF DISPATCH ERROR] prof ${p.id}`, err));
+            }
+          } catch (waProfErr) {
+            console.error('[WHATSAPP PROF DISPATCH ERROR]', waProfErr);
+          }
         }
       } catch (e) {
         console.error('[NESTJS DATABASE NOTIFICATION ERROR]', e);

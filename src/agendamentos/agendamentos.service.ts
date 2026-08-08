@@ -21,6 +21,10 @@ export class AgendamentosService {
     const profIdFilter = profissional_id || user?.profissional_id;
 
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      await this.prisma.$executeRawUnsafe(
+        "ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS recusado_por jsonb DEFAULT '[]'::jsonb;"
+      );
+
       let sql = `
         SELECT a.*,
                c.nome as cliente_nome, c.whatsapp as cliente_whatsapp,
@@ -53,6 +57,12 @@ export class AgendamentosService {
       if (profIdFilter) {
         params.push(profIdFilter);
         sql += ` AND (a.profissional_id = $${params.length} OR a.profissional_id IS NULL)`;
+      }
+
+      // Ocultar agendamentos recusados pelo usuário logado
+      if (user?.profissional_id) {
+        params.push(user.profissional_id);
+        sql += ` AND (a.recusado_por IS NULL OR NOT (a.recusado_por @> jsonb_build_array($${params.length}::int)))`;
       }
 
       sql += ' ORDER BY a.data_hora ASC';
@@ -158,6 +168,78 @@ export class AgendamentosService {
       if (!agendRes || agendRes.length === 0) throw new NotFoundException('Appointment not found.');
 
       const agendamento = agendRes[0];
+
+      // TRATAMENTO DE RECUSA INDIVIDUAL DE SOLICITAÇÃO PENDENTE
+      if ((status === 'recusado' || status === 'cancelado') && ['solicitado', 'pendente', 'aguardando_confirmacao'].includes(agendamento.status)) {
+        await this.prisma.$executeRawUnsafe(
+          "ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS recusado_por jsonb DEFAULT '[]'::jsonb;"
+        );
+
+        let recusados: number[] = [];
+        if (agendamento.recusado_por) {
+          if (Array.isArray(agendamento.recusado_por)) recusados = agendamento.recusado_por;
+          else if (typeof agendamento.recusado_por === 'string') {
+            try { recusados = JSON.parse(agendamento.recusado_por); } catch (e) {}
+          }
+        }
+
+        const userProfId = user?.profissional_id;
+        if (userProfId && !recusados.includes(userProfId)) {
+          recusados.push(userProfId);
+        }
+
+        const isDom = agendamento.tipo_atendimento === 'domicilio' || agendamento.tipo_atendimento === 'externo' || !!agendamento.endereco_externo;
+        let sqlAllProfs = 'SELECT id, nome FROM profissionais WHERE ativo = true';
+        if (isDom) sqlAllProfs += ' AND aceita_atendimento_externo = true';
+        
+        let eligibleProfs: any[] = await this.prisma.$queryRawUnsafe(sqlAllProfs);
+        if ((!eligibleProfs || eligibleProfs.length === 0) && isDom) {
+          eligibleProfs = await this.prisma.$queryRawUnsafe('SELECT id, nome FROM profissionais WHERE ativo = true');
+        }
+
+        const totalEligible = eligibleProfs.length;
+
+        // Se AINDA houver profissionais elegíveis que não recusaram, MANTÉM PENDENTE!
+        if (recusados.length < totalEligible) {
+          await this.prisma.$executeRawUnsafe(
+            "UPDATE agendamentos SET recusado_por = $1::jsonb, updated_at = NOW() WHERE id = $2",
+            JSON.stringify(recusados),
+            id
+          );
+
+          let clientName = 'Cliente';
+          if (agendamento.cliente_id) {
+            const clRes: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM clientes WHERE id = $1', agendamento.cliente_id);
+            if (clRes && clRes.length > 0) clientName = clRes[0].nome;
+          } else if (agendamento.observacao && agendamento.observacao.startsWith('{"temp_cliente_nome"')) {
+            try {
+              const temp = JSON.parse(agendamento.observacao);
+              clientName = temp.temp_cliente_nome;
+            } catch (e) {}
+          }
+
+          const userName = user?.nome || 'Um colega';
+          const notifTitle = 'Solicitação Recusada por Colega';
+          const notifMsg = `O usuário ${userName} recusou a solicitação de agendamento do cliente ${clientName}. A solicitação continua disponível para seu aceite.`;
+
+          for (const p of eligibleProfs) {
+            if (p.id !== userProfId && !recusados.includes(p.id)) {
+              await this.prisma.$queryRawUnsafe(
+                "INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida) VALUES ($1, $2, $3, false)",
+                p.id, notifTitle, notifMsg
+              );
+              this.notificationsGateway.emitToUser(p.id, 'notifications-changed', {
+                type: 'appointment_refused',
+                agendamento_id: id
+              });
+            }
+          }
+
+          this.notificationsGateway.broadcastToTenant(tenantSlug, 'appointments-changed', { action: 'update', id });
+
+          return { message: 'Solicitação recusada por você. Permanecerá pendente para os demais colegas.', agendamento: { ...agendamento, status: 'solicitado', recusado_por: recusados } };
+        }
+      }
 
       // Verificação de concorrência: se o agendamento já foi aceito por outro profissional
       if (
