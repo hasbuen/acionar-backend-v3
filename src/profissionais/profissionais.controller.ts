@@ -14,17 +14,17 @@ export class ProfissionaisController {
 
   @Post()
   create(@Req() req: any, @Body() body: any) {
-    return this.profissionaisService.create(req.user.tenant_slug, body);
+    return this.profissionaisService.create(req.user.tenant_slug, body, req.user);
   }
 
   @Put(':id')
   update(@Req() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.profissionaisService.update(req.user.tenant_slug, parseInt(id, 10), body);
+    return this.profissionaisService.update(req.user.tenant_slug, parseInt(id, 10), body, req.user);
   }
 
   @Delete(':id')
   remove(@Req() req: any, @Param('id') id: string) {
-    return this.profissionaisService.remove(req.user.tenant_slug, parseInt(id, 10));
+    return this.profissionaisService.remove(req.user.tenant_slug, parseInt(id, 10), req.user);
   }
 }
 

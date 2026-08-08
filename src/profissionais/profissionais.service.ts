@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
 
@@ -23,7 +23,11 @@ export class ProfissionaisService {
     });
   }
 
-  async create(tenantSlug: string, dto: any) {
+  async create(tenantSlug: string, dto: any, user?: any) {
+    if (user && user.cargo !== 'proprietario') {
+      throw new ForbiddenException('Apenas o usuário proprietário tem permissão para cadastrar novos profissionais.');
+    }
+
     const { nome, email, whatsapp, senha, cor_identificadora, aceita_atendimento_externo, cargo } = dto;
     if (!nome || !email || !senha) {
       throw new BadRequestException('Nome, e-mail e senha são obrigatórios.');
@@ -65,7 +69,11 @@ export class ProfissionaisService {
     });
   }
 
-  async update(tenantSlug: string, id: number, dto: any) {
+  async update(tenantSlug: string, id: number, dto: any, user?: any) {
+    if (user && user.cargo !== 'proprietario' && user.id !== id) {
+      throw new ForbiddenException('Apenas o usuário proprietário tem permissão para alterar outros profissionais.');
+    }
+
     const { nome, email, whatsapp, senha, cor_identificadora, aceita_atendimento_externo, cargo, ativo } = dto;
 
     await this.prisma.ensureTenantSchema(tenantSlug);
@@ -116,7 +124,11 @@ export class ProfissionaisService {
     });
   }
 
-  async remove(tenantSlug: string, id: number) {
+  async remove(tenantSlug: string, id: number, user?: any) {
+    if (user && user.cargo !== 'proprietario') {
+      throw new ForbiddenException('Apenas o usuário proprietário tem permissão para remover profissionais.');
+    }
+
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const existing: any = await this.prisma.$queryRawUnsafe(
