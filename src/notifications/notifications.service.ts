@@ -4,18 +4,33 @@ import * as webpush from 'web-push';
 
 @Injectable()
 export class NotificationsService {
+  private vapidKeys = {
+    publicKey: process.env.VAPID_PUBLIC_KEY || '',
+    privateKey: process.env.VAPID_PRIVATE_KEY || '',
+  };
+
   constructor(private readonly prisma: PrismaService) {
-    if (process.env.VAPID_SUBJECT && process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-      webpush.setVapidDetails(
-        process.env.VAPID_SUBJECT,
-        process.env.VAPID_PUBLIC_KEY,
-        process.env.VAPID_PRIVATE_KEY
-      );
+    if (!this.vapidKeys.publicKey || !this.vapidKeys.privateKey) {
+      try {
+        const generated = webpush.generateVAPIDKeys();
+        this.vapidKeys.publicKey = generated.publicKey;
+        this.vapidKeys.privateKey = generated.privateKey;
+      } catch (e) {}
+    }
+
+    if (this.vapidKeys.publicKey && this.vapidKeys.privateKey) {
+      try {
+        webpush.setVapidDetails(
+          process.env.VAPID_SUBJECT || 'mailto:admin@acionar.online',
+          this.vapidKeys.publicKey,
+          this.vapidKeys.privateKey
+        );
+      } catch (e) {}
     }
   }
 
   async getPublicKey() {
-    return { publicKey: process.env.VAPID_PUBLIC_KEY || '' };
+    return { publicKey: this.vapidKeys.publicKey };
   }
 
   async subscribe(tenantSlug: string, user: any, dto: any) {
