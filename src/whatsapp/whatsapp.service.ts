@@ -25,18 +25,34 @@ export class WhatsappService {
       });
 
       if (!response.ok) {
-        return { connected: false, state: 'close' };
+        return { connected: false, state: 'close', qrcode: null };
       }
 
       const data = await response.json();
       const state = data?.instance?.state || 'close';
+
+      let qrcode: string | null = null;
+      if (state === 'connecting') {
+        try {
+          const connectResponse = await fetch(`${this.apiUrl}/instance/connect/${instanceName}`, {
+            method: 'GET',
+            headers: this.getHeaders(),
+          });
+          const connectData = await connectResponse.json();
+          qrcode = connectData?.qrcode?.base64 || connectData?.base64 || null;
+        } catch (e) {
+          // ignore
+        }
+      }
+
       return {
         connected: state === 'open',
         state,
+        qrcode,
       };
     } catch (error) {
       this.logger.error(`Erro ao obter status do WhatsApp para ${instanceName}:`, error);
-      return { connected: false, state: 'close', error: error.message };
+      return { connected: false, state: 'close', qrcode: null, error: error.message };
     }
   }
 
