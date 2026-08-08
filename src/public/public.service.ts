@@ -289,17 +289,41 @@ export class PublicService {
             msgText
           );
 
-          // Notificar diretamente no WhatsApp do profissional cadastrado
+          // Notificar diretamente no WhatsApp do profissional cadastrado com template do Passo 1
           try {
             const pRes: any = await this.prisma.$queryRawUnsafe('SELECT whatsapp FROM profissionais WHERE id = $1', p.id);
             const profWhatsapp = pRes[0]?.whatsapp;
             if (profWhatsapp) {
-              const profWaMsg = `🔔 *Novo Agendamento Solicitado!*\n\n` +
-                `Cliente: *${cliente_nome}*\n` +
-                `Serviço: *${serviceName}*\n` +
-                `Data: *${dateFormatted}* às *${timeFormatted}*\n` +
-                (endStr ? `📍 Endereço: *${endStr}*\n` : '') +
-                `\nAcesse o PWA Acionar para **Aceitar** ou **Recusar** esta solicitação.`;
+              let customTemplate: string | null = null;
+              try {
+                const flowRows: any = await this.prisma.$queryRawUnsafe("SELECT valor FROM configuracoes WHERE chave = 'bot_flow'");
+                const flowObj = flowRows[0]?.valor || {};
+                const triggerNode = Array.isArray(flowObj?.nodes) ? flowObj.nodes.find((n: any) => n.type === 'trigger') : null;
+                customTemplate = triggerNode?.config?.text || triggerNode?.config?.alertMessage || null;
+              } catch (eFlow) {}
+
+              let profWaMsg = '';
+              if (customTemplate && customTemplate.trim() !== '') {
+                profWaMsg = customTemplate
+                  .replace(/{cliente}/g, cliente_nome)
+                  .replace(/{cliente_nome}/g, cliente_nome)
+                  .replace(/{cliente_telefone}/g, cliente_whatsapp || '')
+                  .replace(/{servico}/g, serviceName)
+                  .replace(/{data}/g, dateFormatted)
+                  .replace(/{hora}/g, timeFormatted)
+                  .replace(/{horario}/g, timeFormatted)
+                  .replace(/{tipo_atendimento}/g, isDom ? 'Atendimento a Domicílio 🏠' : 'Atendimento no Salão 💈')
+                  .replace(/{endereco}/g, endStr || 'No estabelecimento');
+              } else {
+                profWaMsg = `🚨 *Novo Agendamento Solicitado na Agenda Pública!*\n\n` +
+                  `👤 *Cliente:* ${cliente_nome}\n` +
+                  (cliente_whatsapp ? `📱 *Contato:* ${cliente_whatsapp}\n` : '') +
+                  `💈 *Serviço:* ${serviceName}\n` +
+                  `📅 *Data:* ${dateFormatted} às ${timeFormatted}\n` +
+                  `🏠 *Tipo:* ${isDom ? 'Atendimento a Domicílio' : 'Atendimento no Salão'}\n` +
+                  (endStr ? `📍 *Endereço:* ${endStr}\n` : '') +
+                  `\n*Acesse o aplicativo Acionar para Aceitar ou Recusar.*`;
+              }
 
               this.whatsappService.sendTextMessage(cleanSlug, profWhatsapp, profWaMsg)
                 .then(res => console.log(`[WHATSAPP PROF DISPATCH] Success for prof ${p.id}: ${res.success}`))
