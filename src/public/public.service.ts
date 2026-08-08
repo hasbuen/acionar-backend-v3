@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException, BadRequestException 
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationsGateway } from '../notifications/notifications.gateway';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 
 @Injectable()
 export class PublicService {
@@ -9,6 +10,7 @@ export class PublicService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly notificationsGateway: NotificationsGateway,
+    private readonly whatsappService: WhatsappService,
   ) {}
 
 
@@ -312,6 +314,41 @@ export class PublicService {
         console.error('[SOCKET BROADCAST ERROR]', socketErr);
       }
 
+      // 4. Send WhatsApp confirmation request
+      try {
+        const msgConfigRows: any = await this.prisma.$queryRawUnsafe(
+          "SELECT valor FROM configuracoes WHERE chave = $1", 
+          'mensagens'
+        );
+        const settings = msgConfigRows[0]?.valor || {
+          endereco: 'Rua da amizade 515 bairro: 14 de novembro',
+          template_confirmacao: `📍 *Endereço*: {endereco}\n\nPor gentileza, informe se concorda com este horário ou se prefere realizar alguma alteração.\n\n📌 *Lembrete importante*: Pedimos a gentileza de chegar com **15 minutos de antecedência**.\n\nAgradecemos a preferência e aguardamos você!😊`
+        };
+
+        const dateFormatted = new Date(data_hora).toLocaleDateString('pt-BR');
+        const timeFormatted = new Date(data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        
+        let servNameQuery: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM servicos WHERE id = $1', servico_id);
+        const serviceName = servNameQuery[0]?.nome || 'Serviço';
+
+        const intro = `Olá, *${cliente_nome}*! 👋\n\nSeu agendamento para *${serviceName}* no dia *${dateFormatted}* às *${timeFormatted}* foi solicitado com sucesso!\n\nPor favor, confirme respondendo apenas:\n👉 *1* para *Confirmar*\n👉 *2* para *Cancelar*\n\n`;
+
+        let template = settings.template_confirmacao || '';
+        template = template.replace(/{endereco}/g, settings.endereco || '');
+        template = template.replace(/{cliente}/g, cliente_nome);
+        template = template.replace(/{servico}/g, serviceName);
+        template = template.replace(/{data}/g, dateFormatted);
+        template = template.replace(/{hora}/g, timeFormatted);
+
+        const fullMessage = `${intro}${template}`;
+
+        this.whatsappService.sendTextMessage(cleanSlug, cliente_whatsapp, fullMessage)
+          .then(res => console.log(`[WHATSAPP CONFIRM DISPATCH] Success: ${res.success}`))
+          .catch(err => console.error('[WHATSAPP CONFIRM DISPATCH ERROR]', err));
+      } catch (waErr) {
+        console.error('[WHATSAPP TRIGGER ERROR]', waErr);
+      }
+
       return {
         message: 'Appointment requested successfully.',
         agendamento: apptRes[0],
@@ -578,6 +615,91 @@ export class PublicService {
         whatsappPhone: whatsappClean || queryParams?.whatsapp || '',
         servicoNome
       };
+    });
+  }
+
+  async handleWhatsappWebhook(payload: any) {
+    if (payload.event !== 'messages.upsert') {
+      return { ok: true, skipped: true, reason: 'event_ignored' };
+    }
+
+    const instance = payload.instance;
+    const data = payload.data;
+    if (!instance || !data || !data.key) {
+      return { ok: false, error: 'invalid_payload' };
+    }
+
+    if (data.key.fromMe) {
+      return { ok: true, skipped: true, reason: 'message_from_me' };
+    }
+
+    const remoteJid = data.key.remoteJid;
+    if (!remoteJid || !remoteJid.endsWith('@s.whatsapp.net')) {
+      return { ok: true, skipped: true, reason: 'not_a_user_message' };
+    }
+
+    const cleanPhone = remoteJid.split('@')[0];
+    const phoneWithoutCountry = cleanPhone.startsWith('55') ? cleanPhone.substring(2) : cleanPhone;
+
+    let textMessage = '';
+    if (data.message?.conversation) {
+      textMessage = data.message.conversation;
+    } else if (data.message?.extendedTextMessage?.text) {
+      textMessage = data.message.extendedTextMessage.text;
+    }
+
+    const command = textMessage.trim();
+    if (command !== '1' && command !== '2') {
+      return { ok: true, skipped: true, reason: 'not_a_chatbot_command' };
+    }
+
+    const tenantSlug = instance.replace(/^tenant_/, '');
+    await this.prisma.ensureTenantSchema(tenantSlug);
+
+    return this.prisma.runInTenantSchema(tenantSlug, async () => {
+      const clients: any = await this.prisma.$queryRawUnsafe(
+        "SELECT id FROM clientes WHERE regexp_replace(whatsapp, '\\D', '', 'g') IN ($1, $2) OR whatsapp IN ($3, $4)",
+        cleanPhone,
+        phoneWithoutCountry,
+        cleanPhone,
+        phoneWithoutCountry
+      );
+
+      if (!clients || clients.length === 0) {
+        return { ok: false, error: 'client_not_found' };
+      }
+
+      const clientIds = clients.map((c: any) => c.id);
+      const placeholders = clientIds.map((_, idx) => `$${idx + 1}`).join(',');
+      const agRows: any = await this.prisma.$queryRawUnsafe(
+        `SELECT id, status, data_hora 
+         FROM agendamentos 
+         WHERE cliente_id IN (${placeholders}) 
+           AND status IN ('solicitado', 'agendado') 
+         ORDER BY data_hora DESC 
+         LIMIT 1`,
+        ...clientIds
+      );
+
+      if (!agRows || agRows.length === 0) {
+        return { ok: false, error: 'appointment_not_found' };
+      }
+
+      const agendamento = agRows[0];
+      const novoStatus = command === '1' ? 'agendado' : 'cancelado';
+
+      await this.prisma.$executeRawUnsafe(
+        "UPDATE agendamentos SET status = $1, updated_at = NOW() WHERE id = $2",
+        novoStatus,
+        agendamento.id
+      );
+
+      this.notificationsGateway.broadcastToTenant(tenantSlug, 'appointments-changed', {
+        id: agendamento.id,
+        status: novoStatus,
+      });
+
+      return { ok: true, appointmentId: agendamento.id, status: novoStatus };
     });
   }
 }

@@ -39,4 +39,9 @@ export class PublicController {
   async handleAsaasWebhook(@Body() body: any) {
     return this.publicService.handleAsaasWebhook(body);
   }
+
+  @Post('whatsapp-webhook')
+  async handleWhatsappWebhook(@Body() body: any) {
+    return this.publicService.handleWhatsappWebhook(body);
+  }
 }

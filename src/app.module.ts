@@ -12,6 +12,7 @@ import { CaixaModule } from './caixa/caixa.module';
 import { EstoqueModule } from './estoque/estoque.module';
 import { ProfissionaisModule } from './profissionais/profissionais.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { AppController } from './app.controller';
 
 @Module({
@@ -29,6 +30,7 @@ import { AppController } from './app.controller';
     EstoqueModule,
     ProfissionaisModule,
     NotificationsModule,
+    WhatsappModule,
   ],
   controllers: [AppController],
 })
