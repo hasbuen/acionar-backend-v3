@@ -226,6 +226,9 @@ export class PublicService {
         endereco_externo || null
       );
 
+      let serviceName = 'Serviço';
+      let timeFormatted = '';
+
       // 3. Create database notifications for apt professionals
       try {
         const profsAptos: any = await this.prisma.$queryRawUnsafe(
@@ -237,9 +240,9 @@ export class PublicService {
         );
 
         const dateFormatted = new Date(data_hora).toLocaleDateString('pt-BR');
-        const timeFormatted = new Date(data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        timeFormatted = new Date(data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         const servNameQuery: any = await this.prisma.$queryRawUnsafe('SELECT nome FROM servicos WHERE id = $1', servico_id);
-        const serviceName = servNameQuery[0]?.nome || 'Serviço';
+        serviceName = servNameQuery[0]?.nome || 'Serviço';
 
         const isDom = tipo_atendimento === 'domicilio' || tipo_atendimento === 'externo' || !!endereco_externo;
         let endStr = '';
@@ -281,69 +284,74 @@ export class PublicService {
         }
 
         for (const p of targetProfs) {
-          await this.prisma.$queryRawUnsafe(
-            `INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida)
-             VALUES ($1, $2, $3, false)`,
-            p.id,
-            notifTitle,
-            msgText
-          );
-
-          // Notificar diretamente no WhatsApp do profissional cadastrado com template do Passo 1
           try {
-            const pRes: any = await this.prisma.$queryRawUnsafe('SELECT whatsapp FROM profissionais WHERE id = $1', p.id);
-            const profWhatsapp = pRes[0]?.whatsapp;
-            if (profWhatsapp) {
-              let customTemplate: string | null = null;
-              try {
-                const flowRows: any = await this.prisma.$queryRawUnsafe("SELECT valor FROM configuracoes WHERE chave = 'bot_flow'");
-                const flowObj = flowRows[0]?.valor || {};
-                const triggerNode = Array.isArray(flowObj?.nodes) ? flowObj.nodes.find((n: any) => n.type === 'trigger') : null;
-                customTemplate = triggerNode?.config?.text || triggerNode?.config?.alertMessage || null;
-              } catch (eFlow) {}
-
-              let profWaMsg = '';
-              if (customTemplate && customTemplate.trim() !== '') {
-                profWaMsg = customTemplate
-                  .replace(/{cliente}/g, cliente_nome)
-                  .replace(/{cliente_nome}/g, cliente_nome)
-                  .replace(/{cliente_telefone}/g, cliente_whatsapp || '')
-                  .replace(/{servico}/g, serviceName)
-                  .replace(/{data}/g, dateFormatted)
-                  .replace(/{hora}/g, timeFormatted)
-                  .replace(/{horario}/g, timeFormatted)
-                  .replace(/{tipo_atendimento}/g, isDom ? 'Atendimento a Domicílio 🏠' : 'Atendimento no Salão 💈')
-                  .replace(/{endereco}/g, endStr || 'No estabelecimento');
-              } else {
-                profWaMsg = `🚨 *Novo Agendamento Solicitado na Agenda Pública!*\n\n` +
-                  `👤 *Cliente:* ${cliente_nome}\n` +
-                  (cliente_whatsapp ? `📱 *Contato:* ${cliente_whatsapp}\n` : '') +
-                  `💈 *Serviço:* ${serviceName}\n` +
-                  `📅 *Data:* ${dateFormatted} às ${timeFormatted}\n` +
-                  `🏠 *Tipo:* ${isDom ? 'Atendimento a Domicílio' : 'Atendimento no Salão'}\n` +
-                  (endStr ? `📍 *Endereço:* ${endStr}\n` : '') +
-                  `\n*Acesse o aplicativo Acionar para Aceitar ou Recusar.*`;
-              }
-
-              this.whatsappService.sendTextMessage(cleanSlug, profWhatsapp, profWaMsg)
-                .then(res => console.log(`[WHATSAPP PROF DISPATCH] Success for prof ${p.id}: ${res.success}`))
-                .catch(err => console.error(`[WHATSAPP PROF DISPATCH ERROR] prof ${p.id}`, err));
-            }
-          } catch (waProfErr) {
-            console.error('[WHATSAPP PROF DISPATCH ERROR]', waProfErr);
+            await this.prisma.$queryRawUnsafe(
+              `INSERT INTO notificacoes (profissional_id, titulo, mensagem, lida)
+               VALUES ($1, $2, $3, false)`,
+              p.id,
+              notifTitle,
+              msgText
+            );
+          } catch (notifDbErr) {
+            console.error('[DB NOTIFICATION INSERT ERROR]', notifDbErr);
           }
+
+          // Notificar via WhatsApp em bloco assíncrono 100% isolado (Se o WhatsApp falhar/desconectar, NÃO afeta as notificações do celular)
+          (async () => {
+            try {
+              const pRes: any = await this.prisma.$queryRawUnsafe('SELECT whatsapp FROM profissionais WHERE id = $1', p.id);
+              const profWhatsapp = pRes[0]?.whatsapp;
+              if (profWhatsapp) {
+                let customTemplate: string | null = null;
+                try {
+                  const flowRows: any = await this.prisma.$queryRawUnsafe("SELECT valor FROM configuracoes WHERE chave = 'bot_flow'");
+                  const flowObj = flowRows[0]?.valor || {};
+                  const triggerNode = Array.isArray(flowObj?.nodes) ? flowObj.nodes.find((n: any) => n.type === 'trigger') : null;
+                  customTemplate = triggerNode?.config?.text || triggerNode?.config?.alertMessage || null;
+                } catch (eFlow) {}
+
+                let profWaMsg = '';
+                if (customTemplate && customTemplate.trim() !== '') {
+                  profWaMsg = customTemplate
+                    .replace(/{cliente}/g, cliente_nome)
+                    .replace(/{cliente_nome}/g, cliente_nome)
+                    .replace(/{cliente_telefone}/g, cliente_whatsapp || '')
+                    .replace(/{servico}/g, serviceName)
+                    .replace(/{data}/g, dateFormatted)
+                    .replace(/{hora}/g, timeFormatted)
+                    .replace(/{horario}/g, timeFormatted)
+                    .replace(/{tipo_atendimento}/g, isDom ? 'Atendimento a Domicílio 🏠' : 'Atendimento no Salão 💈')
+                    .replace(/{endereco}/g, endStr || 'No estabelecimento');
+                } else {
+                  profWaMsg = `🚨 *Novo Agendamento Solicitado na Agenda Pública!*\n\n` +
+                    `👤 *Cliente:* ${cliente_nome}\n` +
+                    (cliente_whatsapp ? `📱 *Contato:* ${cliente_whatsapp}\n` : '') +
+                    `💈 *Serviço:* ${serviceName}\n` +
+                    `📅 *Data:* ${dateFormatted} às ${timeFormatted}\n` +
+                    `🏠 *Tipo:* ${isDom ? 'Atendimento a Domicílio' : 'Atendimento no Salão'}\n` +
+                    (endStr ? `📍 *Endereço:* ${endStr}\n` : '') +
+                    `\n*Acesse o aplicativo Acionar para Aceitar ou Recusar.*`;
+                }
+
+                await this.whatsappService.sendTextMessage(cleanSlug, profWhatsapp, profWaMsg);
+              }
+            } catch (waProfErr) {
+              console.warn('[WHATSAPP DISPATCH IGNORED - WA DISCONNECTED OR DOWN]', waProfErr);
+            }
+          })();
         }
       } catch (e) {
         console.error('[NESTJS DATABASE NOTIFICATION ERROR]', e);
       }
 
+      // Notificação Web Push para celulares/navegadores (Livre de dependência do WhatsApp)
       try {
         await this.notificationsService.sendAppointmentPush(cleanSlug, apptRes[0].id);
       } catch (err) {
         console.error('Failed to trigger public appointment push notification:', err);
       }
 
-      // Trigger real-time websocket synchronization
+      // Transmissão Websocket em tempo real para os celulares conectados (Livre de dependência do WhatsApp)
       try {
         this.notificationsGateway.broadcastToTenant(cleanSlug, 'appointments-changed', {
           action: 'create',
@@ -352,7 +360,10 @@ export class PublicService {
         });
         this.notificationsGateway.broadcastToTenant(cleanSlug, 'notifications-changed', {
           action: 'create',
-          type: 'appointment_requested'
+          type: 'appointment_requested',
+          cliente: cliente_nome,
+          servico: serviceName,
+          horario: timeFormatted
         });
       } catch (socketErr) {
         console.error('[SOCKET BROADCAST ERROR]', socketErr);
