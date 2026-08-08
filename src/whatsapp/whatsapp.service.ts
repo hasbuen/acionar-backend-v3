@@ -43,7 +43,27 @@ export class WhatsappService {
   async connect(tenantSlug: string) {
     const instanceName = `tenant_${tenantSlug}`;
     try {
-      // 1. Tentar criar a instância (caso não exista)
+      // 1. Verificar se já está verdadeiramente conectado
+      const currentStatus = await this.getStatus(tenantSlug);
+      if (currentStatus.connected) {
+        return {
+          qrcode: null,
+          state: 'open',
+          connected: true,
+        };
+      }
+
+      // 2. Se não estiver conectado (ex: 'close', 'refused', 'connecting'), DELETAR a instância para limpar credenciais expiradas / limite do Baileys
+      try {
+        await fetch(`${this.apiUrl}/instance/delete/${instanceName}`, {
+          method: 'DELETE',
+          headers: this.getHeaders(),
+        });
+      } catch (e) {
+        // Ignorar se a instância não existia ainda
+      }
+
+      // 3. Criar a instância 100% limpa com novo QR Code
       const createResponse = await fetch(`${this.apiUrl}/instance/create`, {
         method: 'POST',
         headers: this.getHeaders(),
@@ -64,7 +84,7 @@ export class WhatsappService {
         };
       }
 
-      // 2. Se a instância já existe mas está desconectada, buscar o QR Code de conexão
+      // Fallback: se por algum motivo a API exigir o /connect explícito
       const connectResponse = await fetch(`${this.apiUrl}/instance/connect/${instanceName}`, {
         method: 'GET',
         headers: this.getHeaders(),
@@ -79,12 +99,10 @@ export class WhatsappService {
         };
       }
 
-      // Se já estiver conectado
-      const status = await this.getStatus(tenantSlug);
       return {
         qrcode: null,
-        state: status.state,
-        connected: status.connected,
+        state: 'close',
+        connected: false,
       };
     } catch (error) {
       this.logger.error(`Erro ao conectar WhatsApp para ${instanceName}:`, error);
