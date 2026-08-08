@@ -159,6 +159,7 @@ export class AgendamentosService {
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       const { status, data_hora, valor_total, observacao, profissional_id, endereco_externo } = dto;
+      const normalizedStatus = status === 'atendido' ? 'concluido' : status;
 
       const agendRes: any = await this.prisma.$queryRawUnsafe(
         'SELECT * FROM agendamentos WHERE id = $1',
@@ -462,7 +463,7 @@ export class AgendamentosService {
              endereco_externo = COALESCE($7, endereco_externo),
              updated_at = NOW()
          WHERE id = $8 RETURNING *`,
-        status !== undefined ? status : null,
+        normalizedStatus !== undefined ? normalizedStatus : null,
         data_hora !== undefined && data_hora !== '' ? data_hora : null,
         valor_total !== undefined ? valor_total : null,
         finalObservacao !== undefined ? finalObservacao : null,
@@ -511,12 +512,12 @@ export class AgendamentosService {
       }
 
       // Se status mudou para "concluido", consumir produtos
-      if (status === 'concluido' && agendamento.status !== 'concluido' && !agendamento.estoque_consumido) {
+      if (normalizedStatus === 'concluido' && agendamento.status !== 'concluido' && !agendamento.estoque_consumido) {
         await this.consumirProdutosAgendamento(tenantSlug, agendamento, profissional_id || agendamento.profissional_id);
       }
 
       // Se status mudou para "concluido", disparar pesquisa de satisfação
-      if (status === 'concluido' && agendamento.status !== 'concluido') {
+      if (normalizedStatus === 'concluido' && agendamento.status !== 'concluido') {
         this.enviarPesquisaSatisfacao(tenantSlug, id).catch(err => {
           console.error(`[PESQUISA SATISFACAO ERROR] agendamento ${id}:`, err.message);
         });

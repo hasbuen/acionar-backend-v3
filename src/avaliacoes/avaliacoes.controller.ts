@@ -14,6 +14,6 @@ export class AvaliacoesController {
 
   @Get('ranking')
   async getRanking(@Req() req: any) {
-    return this.avaliacoesService.getRanking(req.user.tenant_slug);
+    return this.avaliacoesService.getRanking(req.user.tenant_slug, req.user);
   }
 }

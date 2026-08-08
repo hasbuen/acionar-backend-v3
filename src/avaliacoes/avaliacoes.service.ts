@@ -7,6 +7,7 @@ export class AvaliacoesService {
 
   async findAll(tenantSlug: string, user: any, query: any) {
     const { profissional_id } = query;
+    const canViewTenant = ['proprietario', 'administrador'].includes(user?.cargo);
     await this.prisma.ensureTenantSchema(tenantSlug);
 
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
@@ -25,8 +26,14 @@ export class AvaliacoesService {
       `;
       const params: any[] = [];
 
-      if (profissional_id) {
+      if (canViewTenant && profissional_id) {
         params.push(parseInt(profissional_id, 10));
+        sql += ` AND a.profissional_id = $${params.length}`;
+      }
+
+      if (!canViewTenant) {
+        if (!user?.profissional_id) return { reviews: [] };
+        params.push(user.profissional_id);
         sql += ` AND a.profissional_id = $${params.length}`;
       }
 
@@ -56,10 +63,19 @@ export class AvaliacoesService {
     });
   }
 
-  async getRanking(tenantSlug: string) {
+  async getRanking(tenantSlug: string, user: any) {
+    const canViewTenant = ['proprietario', 'administrador'].includes(user?.cargo);
     await this.prisma.ensureTenantSchema(tenantSlug);
     return this.prisma.runInTenantSchema(tenantSlug, async () => {
       // Get all active professionals and their review statistics
+      const params: any[] = [];
+      let professionalFilter = '';
+      if (!canViewTenant) {
+        if (!user?.profissional_id) return { ranking: [] };
+        params.push(user.profissional_id);
+        professionalFilter = ` AND p.id = $${params.length}`;
+      }
+
       const stats: any[] = await this.prisma.$queryRawUnsafe(`
         SELECT p.id as profissional_id,
                p.nome as profissional_nome,
@@ -69,10 +85,10 @@ export class AvaliacoesService {
         FROM profissionais p
         LEFT JOIN agendamentos a ON a.profissional_id = p.id
         LEFT JOIN avaliacoes ev ON ev.agendamento_id = a.id
-        WHERE p.ativo = true
+        WHERE p.ativo = true${professionalFilter}
         GROUP BY p.id, p.nome, p.foto_url
         ORDER BY media_nota DESC, total_avaliacoes DESC
-      `);
+      `, ...params);
 
       return { ranking: stats };
     });

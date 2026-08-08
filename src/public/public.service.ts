@@ -775,7 +775,7 @@ export class PublicService {
       const jaAvaliado = evalRows && evalRows.length > 0;
 
       return {
-        eligible: appt.status === 'concluido' && !jaAvaliado,
+        eligible: ['concluido', 'atendido'].includes(appt.status) && !jaAvaliado,
         cliente_nome: clienteNome || 'Cliente',
         profissional_nome: appt.profissional_nome || 'Profissional',
         servico_nome: appt.servico_nome || 'Atendimento',
@@ -815,4 +815,3 @@ export class PublicService {
     });
   }
 }
-
